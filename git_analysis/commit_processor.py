@@ -2,6 +2,8 @@ import pygit2
 from .java_change_detector import JavaChangeDetector, JavaHierarchy
 from tqdm import tqdm
 
+CONTEXT_LINES = 0
+
 class CommitProcessor:
     """ Responsible for processing git commits into a format usable by Python
         for further processing, includes inferring changes in the source code(Java)
@@ -30,16 +32,18 @@ class CommitProcessor:
         self.commits_by_id[commit.id] = commit_object
 
         for parent in commit.parents:
-            diff = self.repo.diff(commit, parent)
+            diff = self.repo.diff(parent, commit, context_lines=CONTEXT_LINES)
             commit_object["patches"] = []
             for patch in diff:
                 delta = patch.delta
                 patch_object = {
                     "from": delta.old_file.path, "to": delta.new_file.path,
-                    "status": delta.status_char()
+                    "status": delta.status_char(),
+                    "parent_commit": parent.id,
+                    "parent_commit_message": parent.message
                 }
                 if patch_object["from"].endswith(".java") and patch_object["to"].endswith(".java"):
-                    patch_object["changes"] = self.change_detector.identify_changes(self.repo, patch)
+                    patch_object["changes"] = list(self.change_detector.identify_changes(self.repo, patch))
                 commit_object["patches"].append(patch_object)
 
         
