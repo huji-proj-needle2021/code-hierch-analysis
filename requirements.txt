@@ -12,3 +12,4 @@ wordcloud~=1.8.1
 tabulate~=0.8.9
 pygit2~=1.7.2
 mypy~=0.931
+pytest~=7.0.0

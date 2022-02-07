@@ -1,6 +1,9 @@
 import pygit2
-from .java_change_detector import JavaChangeDetector, JavaHierarchy
+from .java_change_detector import JavaChangeDetector, JavaIdentifier
 from tqdm import tqdm
+import logging
+
+log = logging.getLogger("commit_processor")
 
 CONTEXT_LINES = 0
 
@@ -12,7 +15,7 @@ class CommitProcessor:
         self.repo = pygit2.Repository(repo_path)
         self.commits = []
         self.commits_by_id = {}
-        self.change_detector = JavaChangeDetector()
+        self.change_detector = JavaChangeDetector(self.repo)
     
     def add_all_commits(self):
         walk = self.repo.walk(self.repo.head.target, pygit2.GIT_SORT_TOPOLOGICAL) 
@@ -32,6 +35,7 @@ class CommitProcessor:
         self.commits_by_id[commit.id] = commit_object
 
         for parent in commit.parents:
+            log.debug(f'Diffing commit {commit.id} - "{commit.message[:80].strip()}" with parent commit {parent.id} - "{parent.message[:80].strip()}"')
             diff = self.repo.diff(parent, commit, context_lines=CONTEXT_LINES)
             commit_object["patches"] = []
             for patch in diff:
@@ -43,7 +47,8 @@ class CommitProcessor:
                     "parent_commit_message": parent.message
                 }
                 if patch_object["from"].endswith(".java") and patch_object["to"].endswith(".java"):
-                    patch_object["changes"] = list(self.change_detector.identify_changes(self.repo, patch))
+                    log.debug(f'\tIdentifying Java changes in diff from "{patch_object["from"]}" to "{patch_object["to"]}" ')
+                    patch_object["changes"] = list(self.change_detector.identify_changes(patch))
                 commit_object["patches"].append(patch_object)
 
         
