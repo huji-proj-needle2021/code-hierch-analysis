@@ -54,22 +54,16 @@ modifier = pp.one_of([
 
 # method
 
-# we don't care about a method's block, but need to deal with the fact it might
+# we don't care about a method's body, but need to deal with the fact it might
 # have even more nested brackets
-block = pp.nested_expr("{", "}").suppress()
+method_body = pp.nested_expr("{", "}").suppress()
 
-# first identifier is type, second identifier is method name. first identifier is missing for
-# constructor
-# definition
-
-opt_throws = pp.Opt(pp.Keyword("throws") + pp.SkipTo(block | SEMICOLON)).suppress()
-
-ctor = identifier("name") + opt_throws + LPAREN + ... + RPAREN + block
+opt_throws = pp.Opt(pp.Keyword("throws") + pp.SkipTo(method_body | SEMICOLON)).suppress()
+ctor = identifier("name") + LPAREN + ... + RPAREN + opt_throws + method_body
 
 # an interface method may end with a semicolon rather than a block
-method_declaration = identifier + identifier("name") + LPAREN + ... + RPAREN + opt_throws + (block | SEMICOLON)
-
-ctor_or_method_declaration = ctor | method_declaration
+method_declaration = identifier + identifier("name") + LPAREN + ... + RPAREN + opt_throws + (method_body | SEMICOLON)
+ctor_or_method_declaration = modifier[...] + (ctor | method_declaration)
 
 def method_parse_action(s: str, loc: int, res: pp.ParseResults) -> Method:
     return Method(
@@ -85,12 +79,15 @@ ctor_or_method_declaration.set_parse_action(method_parse_action)
 # class/interface/enum class/annotation etc..
 
 class_body = pp.Forward()
-class_declaration = modifier[...] + pp.one_of(["enum", "class", "interface", "@interface"], as_keyword=True) + identifier("name") + ... + LBRACE + class_body("class_body") + RBRACE
+class_declaration = modifier[...] + pp.one_of(["enum", "class", "interface", "@interface"], as_keyword=True) + identifier("name") + ... + class_body 
 
-class_member = pp.SkipTo(modifier[...] + (class_declaration | ctor_or_method_declaration), include=True)
-# class_member = modifier[...] + (class_declaration | ctor_or_method_declaration | SEMICOLON)
-# class_member = pp.SkipTo(class_member).suppress() + class_member
-class_body <<= pp.Group(class_member[...])
+class_member = class_declaration | ctor_or_method_declaration
+class_member = pp.SkipTo(class_member).suppress() + class_member
+class_body <<= LBRACE + pp.Group(class_member[...])("class_body") + RBRACE
+
+# TODO: mysterious bug when using the following form 
+# class_declaration = modifier[...] + pp.one_of(["enum", "class", "interface", "@interface"], as_keyword=True) + identifier("name") + ... + LBRACE + class_body + RBRACE 
+# class_body <<= pp.Group(class_member[...])("class_body")
 
 def class_declaration_parse_action(s: str, loc: int, res: pp.ParseResults) -> Class:
     return Class(
@@ -115,16 +112,6 @@ def compilation_unit_parse_action(s: str, loc: int, res: pp.ParseResults) -> Jav
         classes=[c for c in res["classes"] if isinstance(c, Class)]
     )
 compilation_unit.add_parse_action(compilation_unit_parse_action)
-
-def test_pp_block():
-    single_block = "{}"
-    nested_block = "{{}}"
-    single_block_with_junk = "{junk etc}"
-    nested_blocks_with_junk = "{junk { even more } and more {} do { blah blah }}"
-    block.parse_string(single_block, parse_all=True)
-    block.parse_string(nested_block, parse_all=True)
-    block.parse_string(single_block_with_junk, parse_all=True)
-    block.parse_string(nested_blocks_with_junk, parse_all=True)
 
 def test_pp_method_parse():
     some_method = """retType theFunction(i don't care...) throws something { 
@@ -169,23 +156,23 @@ def test_pp_class_parse():
     assert res.methods[0].name == "LikeACtor"
     assert res.methods[1].name == "bar"
 
+def test_pp_nested_class():
     nested_class = """class MyClass implements some junk and stuff {
-        void myFunction(){
-
-        }
-        other junk inside will be ignored
-
-        @or this
         class InnerClass {
-            void innerClassFun() {}
+            enum EvenMoreNested {
+                class StillNested {
+                    void EvenHasAFunction() {}
+                }
+            }
+        } 
+        class Kek {
+            class Mix {}
         }
-        
     }"""
     res: Class = class_declaration.parse_string(nested_class, parse_all=True)[0]
     assert res.name == "MyClass"
-    assert res.methods[0].name == "myFunction"
-    assert res.classes[0].name == "InnerClass"
-    assert res.classes[0].methods[0].name == "innerClassFun"
+    # assert res.classes[0].name == "InnerClass"
+    # assert res.classes[1].name == "Another"
 
 def test_pp_compilation_unit():
     file = """
