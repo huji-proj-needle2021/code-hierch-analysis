@@ -113,49 +113,35 @@ class JavaParser:
         self.tokens = tokens
         self.main_pos = 0
 
-    def token_at(self, pos: int) -> Optional[Token]:
-        if pos >= len(self.tokens) or pos < 0:
-            return None
-        return self.tokens[pos]
-
-    def parse(self) -> Iterable[JavaClass]:
-        """ Begins parsing the top-level classes/interfaces/enums of a Java file"""
-        i = 0
-        while i < len(self.tokens):
-            token = self.tokens[i]
-            if token.type == TokenType.KEYWORD and token.value in CLASS_KEYWORDS:
-                clazz = self.try_parse_class(i)
-                if clazz is not None:
-                    yield clazz
-                    i = clazz.end
-                else:
-                    i += 1
-
-    def try_parse_class(self, pos: int) -> Optional[JavaClass]:
+    def try_parse_class(self, pos: int) -> Tuple[int, Optional[JavaClass]]:
         """ Tries to parse a class/interface/enum, whose keyword appears at the given position. 
+            Also returns the highest token index that was scanned during this parsing - that of 
+            the closing bracket(if the class was parsed successfully), otherwise of the last token
+            seen by this method.
         """
         if pos - 1 > 0 and self.tokens[pos - 1].value == ".":
             # we matched ".class", skip
-            return None
+            return pos, None
         if self.tokens[pos + 1].type != TokenType.IDENTIFIER:
             log.warning(f"Expected to see an identifier after class/interface keyword")
-            return None
+            return pos + 1, None
         class_type = self.tokens[pos].value
         name = self.tokens[pos + 1].value
         log.debug(f"Parsing class of type {class_type}, name: {name}")
-        # TODO: find an earlier beginning (modifiers belonging to class)
 
         # finding the opening semicolon - there may be generic or extends/implements inbetween
         brack_ix = next((i for i in range(pos + 2, len(
             self.tokens)) if self.tokens[i].value == "{"), None)
         if brack_ix is None:
             log.warning(f"Couldn't find opening bracket or semicolon for suspected class at {pos}")
-            return None
+            return pos + 1, None
         end_ix, members = self.parse_members(brack_ix + 1)
 
         class_keyword_pos = self.tokens[pos].pos
         end_brack_pos = self.tokens[end_ix].pos if end_ix >= 0 else self.tokens[-1].pos
-        return JavaClass(start=class_keyword_pos, end=end_brack_pos + 1, name=name, kind=class_type, members=members)
+
+        # TODO: find an earlier starting position (modifiers and annotations belonging to class)
+        return end_ix, JavaClass(start=class_keyword_pos, end=end_brack_pos + 1, name=name, kind=class_type, members=members)
     
 
     def try_parse_method(self, param_op_pos: int, lower_bound: int=0) -> Tuple[int, Optional[JavaMethod]]:
@@ -163,7 +149,7 @@ class JavaParser:
             end of the previous member(or start of the member block) is given to prevent unnecessary backtracking.
             
             The method returns the highest index which was scanned, in either case of failure or success - this allows
-            the parser to continue 
+            the parser to continue efficiently without repeating seen elements.
             
             In contrast to parsing a class, this method is a bit inefficient due to use of backtracking, consider the following case:
             pkg.foo.bar.ClsA.ClsB foo(); // abstract or interface method that returns ClsB
@@ -188,13 +174,14 @@ class JavaParser:
                 return i, members
             # We almost definitely have a class
             if token.type == TokenType.KEYWORD and token.value in CLASS_KEYWORDS:
-                clazz = self.try_parse_class(i)
+                i, clazz = self.try_parse_class(i)
+                i += 1
                 if clazz is not None:
                     members.append(clazz)
-                    i = clazz.end
             # We suspect a function call (based on parameter list)
             elif token.type == TokenType.SEPARATOR and token.value == "(":
                 i, method = self.try_parse_method(i)
+                i += 1
                 if method is not None:
                     members.append(method)
             
@@ -232,7 +219,7 @@ class JavaParser:
 
 
 def test_java_parse_class():
-    txt = """class Foo<T,A> implements Foo and extends bar {
+    txt = """{ class Foo<T,A> implements Foo and extends bar {
         static {
             ey {} {} "{" 
             // {{
@@ -241,14 +228,18 @@ def test_java_parse_class():
         @interface Bar {
             more junk -> {} lel woot
             class Baz {
-
+                הכל נכון גם כשיש עברית, 
+                אפילו שהלקסר מתעלם ממנה כי לא אכפת לנו באמת מליטרלים
             }//ENDBAZ
         }//ENDBAR
-    }"""
+    }//ENDFOO
+    } """
     tok = list(JavaLexer().lex(txt))
     print(tok)
     parser = JavaParser(tok)
-    clazz = parser.try_parse_class(0)
+    ending_token_ix, members = parser.parse_members(1)
+    assert len(members) == 1
+    clazz = members[0]
 
     assert clazz and clazz.name == "Foo"
     assert clazz.members[0].name == "Bar"
@@ -259,5 +250,9 @@ def test_java_parse_class():
     assert clazz.members[0].members[0].start == txt.index("class Baz"), "start position of Baz class"
     assert clazz.members[0].members[0].end == next(re.finditer(r"//ENDBAZ", txt)).start(), "end position of Baz class"
     
-    assert clazz.start == 0 , "beginning of Foo class"
-    assert clazz.end == len(txt), "end position of Foo class"
+    assert clazz.start == txt.index("class Foo"), "beginning of Foo class"
+    assert clazz.end == next(re.finditer(r"//ENDFOO", txt)).start(), "end position of Foo class"
+    assert parser.tokens[ending_token_ix].value == "}"
+
+if __name__ == "__main__":
+    test_java_parse_class()
