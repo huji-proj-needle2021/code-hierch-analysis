@@ -3,37 +3,43 @@
 """
 
 from __future__ import annotations
-from optparse import Option
 from typing import NamedTuple, List, Optional, Union, Iterator
+from enum import IntEnum, auto
+from functools import partial
 
+class HierarchyType(IntEnum):
+    package = auto()
+    # class, interface or enum
+    type_def = auto() 
+    # also covers constructors and static functions
+    method = auto()
+    
 
-
-class JavaFile(NamedTuple):
+class JavaHierarchy:
     start: int
     end: int
     name: str
-    members: List[JavaClass]
-    parent = None
+    members: List[JavaHierarchy]
+    parent: Optional[JavaHierarchy]
+    kind: HierarchyType
+    __slots__ = ['start', 'end', 'name', 'kind', 'members', 'parent']
 
-class JavaClass(NamedTuple):
-    start: int
-    end: int
-    name: str
-    kind: str
-    members: List[Union[JavaClass, JavaMethod]]
-    parent: Union[JavaClass, JavaFile] = None
-
-class JavaMethod(NamedTuple):
-    start: int
-    end: int
-    name: str
-    members = None
-    parent: JavaClass = None
-
-JavaHierachy = Union[JavaFile, JavaClass, JavaMethod]
+    def __init__(self, name: str, kind: HierarchyType, start: int, end: int, parent: Optional[JavaHierarchy] = None,
+                 members: Optional[List[JavaHierarchy]] = None):
+        self.name = name
+        self.kind = kind
+        self.start = start
+        self.end = end
+        self.parent = parent
+        self.members = [] if members is None else members
 
 
-def tree_dfs_preorder(tree: JavaHierachy) -> Iterator[JavaHierachy]:
+JavaFile = partial(JavaHierarchy, kind=HierarchyType.package)
+JavaClass = partial(JavaHierarchy, kind=HierarchyType.type_def)
+JavaMethod = partial(JavaHierarchy, kind=HierarchyType.method)
+
+
+def tree_dfs_preorder(tree: JavaHierarchy) -> Iterator[JavaHierarchy]:
     """ Traverses the Java hierarchy in a DFS preorder (a topological sort), note that
         this ordering goes over the Java hierarchy elements by the order in which their declarations appear.
     """
@@ -49,12 +55,12 @@ def tree_dfs_preorder(tree: JavaHierachy) -> Iterator[JavaHierachy]:
 class PosToJavaUnitMatcher:
     """ Responsible for matching byte positions in the original file, to
         the Java hierarchy that they belong to. Positions are assumed to be given in an ascending order"""
-    def __init__(self, root: JavaHierachy):
+    def __init__(self, root: JavaHierarchy):
         self._it = tree_dfs_preorder(root)
         self._cur = next(self._it)
         self._next = next(self._it, None)
 
-    def find(self, pos: int) -> Union[JavaFile, JavaClass, JavaMethod]:
+    def find(self, pos: int) -> JavaHierarchy:
         assert pos >= self._cur.start, "Byte positions must be given in weakly increasing order"
 
         while self._next is not None and pos >= self._next.start:

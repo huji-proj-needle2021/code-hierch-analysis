@@ -183,7 +183,7 @@ class JavaParser:
         except Exception as e:
             log.error(f"Error while parsing: {e}")
         clazz = JavaFile(package_name, start=0, end=i, members=members)
-        for member in members:
+        for member in clazz.members:
             member.parent = clazz
         return clazz
 
