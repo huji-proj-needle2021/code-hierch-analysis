@@ -135,7 +135,7 @@ class JavaParser:
         if brack_ix is None:
             log.warning(f"Couldn't find opening bracket or semicolon for suspected class at {pos}")
             return pos + 1, None
-        end_ix, members = self.parse_members(brack_ix + 1)
+        end_ix, members = self.parse_members(class_type, brack_ix + 1)
 
         class_keyword_pos = self.tokens[pos].pos
         end_brack_pos = self.tokens[end_ix].pos if end_ix >= 0 else self.tokens[-1].pos
@@ -144,9 +144,9 @@ class JavaParser:
         return end_ix, JavaClass(start=class_keyword_pos, end=end_brack_pos + 1, name=name, kind=class_type, members=members)
     
 
-    def try_parse_method(self, param_op_pos: int, lower_bound: int=0) -> Tuple[int, Optional[JavaMethod]]:
-        """ Tries to parse a method/ctor when given a parameter list. A lower index bound specifiying the
-            end of the previous member(or start of the member block) is given to prevent unnecessary backtracking.
+    def try_parse_method(self, class_kind: str, open_paren_ix: int, lower_bound: int=0) -> Tuple[int, Optional[JavaMethod]]:
+        """ Tries to parse a method/ctor when given a parameter list. A lower index bound specifiying the minimal
+            starting position(one past the ending of the previous member in the block) is given to prevent unnecessary backtracking.
             
             The method returns the highest index which was scanned, in either case of failure or success - this allows
             the parser to continue efficiently without repeating seen elements.
@@ -158,15 +158,96 @@ class JavaParser:
             or even a lambda
             var lambdaDef = (int a, int b) -> {};
         """
-        return param_op_pos + 1, None
+        log.debug(f"Trying to parse suspected method whose paren begins at {open_paren_ix}, lower bound: {lower_bound}, belonging to class type {class_kind}")
+        closing_paren_ix = self.find_closing_bracket(open_paren_ix)
+        if not closing_paren_ix:
+            return open_paren_ix, None
+        
+        opening_brack_or_sc_ix = next((i for i in range(closing_paren_ix + 1, len(self.tokens)) if self.tokens[i].type == TokenType.SEPARATOR
+                                    and self.tokens[i].value in (";", "{")), None)
+        if not opening_brack_or_sc_ix:
+            log.warning("Couldn't find opening bracket or semicolon after parentheses block")
+            return open_paren_ix, None
+        if open_paren_ix - 1 < 0 or self.tokens[open_paren_ix - 1].type != TokenType.IDENTIFIER:
+            log.debug(f"Didn't find identifier before paren, instead found {self.tokens[open_paren_ix - 1]}")
+            return open_paren_ix, None
 
-    def parse_members(self, pos_after_brack: int) -> Tuple[int, List[Union[JavaClass, JavaMethod]]]:
-        """ Parses a list of method/class declarations in a block starting at given index.
+        method_ident_tok = self.tokens[open_paren_ix - 1]
+        closer_ix = opening_brack_or_sc_ix
+        if self.tokens[opening_brack_or_sc_ix].value == "{":
+            closer_ix = self.find_closing_bracket(opening_brack_or_sc_ix)
+            if closer_ix is None:
+                return open_paren_ix, None
+            if self.tokens[opening_brack_or_sc_ix - 1].value == "->":
+                log.debug("False positive, found lambda")
+                return closer_ix, None
+            # if we found an opening bracket after the parentheses, and it's not a lambda,
+            # then it must be a method declaration.
+
+        return closer_ix, JavaMethod(start=method_ident_tok.pos, end=self.tokens[closer_ix].pos + 1, name=method_ident_tok.value)
+
+    def skip_to(self, from_pos: int, token_type: TokenType, values: Iterable[str]) -> int:
+        """ Looks for a token matching given criteria from a given starting position, returns its
+            index, or the index of the last token if no match was found. In case of encountering skipping over a paren/bracket(that isn't
+            the target value being skipped to), will skip towards the matching closing bracket - ignoring everything between.
+            it.
+            """
+        i = from_pos
+        while i < len(self.tokens):
+            if self.tokens[i].type == token_type and self.tokens[i].value in values:
+                return i
+            elif self.tokens[i].type == TokenType.SEPARATOR and self.tokens[i].value in OPENING_TO_CLOSING_SEP.keys():
+                if i - 1 > 0 and self.tokens[i].value == "{" and self.tokens[i-1].value != "->":
+                    log.warn("Skipped a block that does not follow a lambda")
+                closing_brack_ix = self.find_closing_bracket(i)
+                i = closing_brack_ix + 1 if closing_brack_ix is not None else i + 1
+            else:
+                i += 1
+
+        log.warning(f"Couldn't skip to {token_type} of value in {values} starting from {from_pos}, skipped to end of text")
+        return len(self.tokens) - 1
+    
+    def try_skip_annotation(self, at_symbol_pos: int) -> int:
+        """ Tries to parse an annotation given the position of the "@" token, 
+            and returns the token index after that annotation, or just one past the given index if no annotation was parsed."""
+        if at_symbol_pos + 1 == len(self.tokens):
+            return at_symbol_pos + 1
+        if self.tokens[at_symbol_pos + 1].value == "interface":
+            # @interface is an annotation definition, which we will parse as a class
+            return at_symbol_pos + 1
+        elif self.tokens[at_symbol_pos + 1].type != TokenType.IDENTIFIER:
+            log.warning("Expected 'interface' or identifier after '@' symbol, "
+                        f"got {self.tokens[at_symbol_pos + 1]} instead")
+            return at_symbol_pos + 1
+        
+        # start parsing the annotation's type name - an annotation type
+        # cannot be generic, so it's basically dot delimited identifiers
+
+        after_ident_pos = at_symbol_pos + 2
+        while after_ident_pos < len(self.tokens) and self.tokens[after_ident_pos].value == ".":
+            if after_ident_pos + 1 == len(self.tokens) or self.tokens[after_ident_pos + 1].type != TokenType.IDENTIFIER:
+                logging.warning("Expected identifier after dot separator, got "
+                                f"{self.tokens[after_ident_pos + 1]} instead")
+                return after_ident_pos + 1
+            after_ident_pos = after_ident_pos + 2
+        
+        if after_ident_pos < len(self.tokens) and self.tokens[after_ident_pos].value == "(":
+            # annotation with parameter list - skip to end of list
+            closing_paren = self.find_closing_bracket(after_ident_pos)
+            if closing_paren is None:
+                return after_ident_pos + 1
+            return closing_paren + 1
+        return after_ident_pos
+
+    def parse_members(self, class_type: str, pos_after_brack: int) -> Tuple[int, List[Union[JavaClass, JavaMethod]]]:
+        """ Parses a list of method/class declarations in a class/interface/enum block
+            (as specified in `class_type`) starting at given index.
             Returns the index of the closing bracket tupled with a list of parsed members, or -1 as index
             if no closing bracket was found.
         """
         members: List[Union[JavaClass, JavaMethod]] = []
         i = pos_after_brack
+        min_bound = pos_after_brack
         while i < len(self.tokens):
             token = self.tokens[i]
             # reached end of current member block
@@ -178,18 +259,28 @@ class JavaParser:
                 i += 1
                 if clazz is not None:
                     members.append(clazz)
-            # We suspect a function call (based on parameter list)
+                    min_bound = i
+            # We skip field assignment (as it may have a parameter list due to function invocation, 
+            # # or a lambda definition which could confuse the parser)
+            elif token.type == TokenType.OPERATOR and token.value == "=":
+                i = self.skip_to(i + 1, TokenType.SEPARATOR, (";",)) + 1
+            # skip an annotation (as it may have a parameter list)
+            elif token.type == TokenType.SEPARATOR and token.value == "@":
+                i = self.try_skip_annotation(i)
+            # We have a function call (based on parameter list)
             elif token.type == TokenType.SEPARATOR and token.value == "(":
-                i, method = self.try_parse_method(i)
+                i, method = self.try_parse_method(class_type, i, min_bound)
                 i += 1
                 if method is not None:
                     members.append(method)
+                    min_bound = i
             
             # We found a block that doesn't belong to a class or method(e.g, a static block or
             # a lambda function declaration), skip to the block's ending.
             elif token.type == TokenType.SEPARATOR and token.value == "{":
                 closing_pos = self.find_closing_bracket(i)
                 i = closing_pos + 1 if closing_pos is not None else i + 1
+                min_bound = i
             else:
                 i += 1
 
@@ -199,8 +290,7 @@ class JavaParser:
 
     def find_closing_bracket(self, starting_bracket_pos: int) -> Optional[int]:
         """ Given the position of a starting paren/bracket, finds the index of the corresponding ending
-            bracket. If dir=1, then it scans forward, if -1, then backward. Returns None
-            if no closing bracket is found. """
+            bracket. Returns None if no closing bracket is found. """
         assert (self.tokens[starting_bracket_pos].value in OPENING_TO_CLOSING_SEP.keys())
         starter = self.tokens[starting_bracket_pos].value
         closer = OPENING_TO_CLOSING_SEP[starter]
@@ -237,7 +327,7 @@ def test_java_parse_class():
     tok = list(JavaLexer().lex(txt))
     print(tok)
     parser = JavaParser(tok)
-    ending_token_ix, members = parser.parse_members(1)
+    ending_token_ix, members = parser.parse_members("class", 1)
     assert len(members) == 1
     clazz = members[0]
 
@@ -254,5 +344,35 @@ def test_java_parse_class():
     assert clazz.end == next(re.finditer(r"//ENDFOO", txt)).start(), "end position of Foo class"
     assert parser.tokens[ending_token_ix].value == "}"
 
+
+def test_java_parse_method():
+    txt = """{
+        int assignment = calcSomething();
+        int lambda = (a b) -> { {} {} () };
+        junk inbetween etcetra {}
+        @annotA
+        @annoB(blah () blah {} /* blah */)
+        void foo() {
+           {} {} "{{{"
+           /* {{ */    
+        }//ENDFOO
+        @noo()
+        class Bar<blah> extends T<> {
+
+        }//ENDBAR
+    }"""
+    tok = list(JavaLexer().lex(txt))
+    parser = JavaParser(tok)
+
+    _ix, members = parser.parse_members("class", 1)
+    assert members[0].name == "foo"
+    assert isinstance(members[0], JavaMethod)
+    assert members[0].start == txt.index("foo()"), "start position of foo method"
+    assert members[0].end == next(re.finditer(r"//ENDFOO", txt)).start(), "end position of foo method"
+    assert members[1].name == "Bar"
+    assert members[1].start == txt.index("class Bar"), "start position of bar class"
+    assert members[1].end == next(re.finditer(r"//ENDBAR", txt)).start(), "end position of bar class"
+
+
 if __name__ == "__main__":
-    test_java_parse_class()
+    test_java_parse_method()
