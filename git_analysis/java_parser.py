@@ -17,6 +17,7 @@ from typing import NamedTuple, Iterable, List
 import logging
 import re
 from .utils import iterate_regex_matches_sequentially
+import pyparsing as pp
 
 log = logging.getLogger("java_parser")
 
@@ -27,7 +28,7 @@ class JavaMethod(NamedTuple):
 
     def to_change(self, change_type: ChangeType) -> JavaChange:
         return JavaChange(changed_hierarchy=JavaIdentifier(
-            package=self.clazz.package.name,
+            package=self.clazz.file.package,
             class_name=self.clazz.name,
             method_name=self.name
         ), change_type=change_type)
@@ -36,26 +37,26 @@ class JavaClass(NamedTuple):
     name: str
     definition_byte_pos: int
     methods: List[JavaMethod]
-    package: JavaPackage
+    file: JavaFile
 
     def to_changes(self, change_type: ChangeType) -> Iterable[JavaChange]:
         if len(self.methods) == 0:
             yield JavaChange(changed_hierarchy=JavaIdentifier(
-                package=self.package.name,
+                package=self.file.package,
                 class_name=self.name
             ), change_type=change_type)
         for method in self.methods:
             yield method.to_change(change_type)
 
-class JavaPackage(NamedTuple):
-    name: str
-    definition_byte_pos: int
+class JavaFile(NamedTuple):
+    package: str
+    package_definition_pos: int
     classes: List[JavaClass]
 
     def to_changes(self, change_type: ChangeType) -> Iterable[JavaChange]:
         if len(self.classes) == 0:
             yield JavaChange(changed_hierarchy=JavaIdentifier(
-                package=self.name
+                package=self.package
             ), change_type=change_type)
         for clazz in self.classes:
             yield from clazz.to_changes(change_type)
@@ -84,7 +85,7 @@ METHOD_RE = re.compile((
 ), re.MULTILINE)
 METHOD_RE_B = re.compile(bytes(METHOD_RE.pattern, 'utf-8'), re.MULTILINE)
 
-def parse_java_file(contents: bytes, path: str) -> JavaPackage:
+def parse_java_file(contents: bytes, path: str) -> JavaFile:
     log.debug(f"parsing java file at {path}")
 
     package_match = next(PACKAGE_RE_B.finditer(contents), None)
@@ -95,17 +96,17 @@ def parse_java_file(contents: bytes, path: str) -> JavaPackage:
         inferred_package = path.replace("/src/main/", "/")
         log.warn(
             f"No Java package definition found, using inferred name {inferred_package}")
-        current_package = JavaPackage(
-            name=inferred_package, definition_byte_pos=0, classes=[])
+        current_package = JavaFile(
+            package=inferred_package, package_definition_pos=0, classes=[])
     else:
-        current_package = JavaPackage(name=str(package_match.group(
-            1)), definition_byte_pos=package_match.start(0), classes=[])
+        current_package = JavaFile(package=str(package_match.group(
+            1)), package_definition_pos=package_match.start(0), classes=[])
 
     current_class = None
     for it_index, match in iterate_regex_matches_sequentially([class_match_it, method_match_it]):
         if it_index == 0:
             current_package.classes.append(JavaClass(name=str(match.group(1)), definition_byte_pos=match.start(0), methods=[],
-                                                        package=current_package))
+                                                        file=current_package))
             current_class = current_package.classes[-1]
         elif it_index == 1:
             if current_class is None:
@@ -163,3 +164,124 @@ def test_method_re():
     """
     matches = [match.group(1) for match in METHOD_RE.finditer(methods)]
     assert matches == [ "Main", "myFun", "anotherFun"]
+
+# definition of grammar
+
+single_line_comment = pp.Literal("//") + ... + pp.line_end
+multiline_comment = pp.Literal("/*") + ... + pp.Literal("*/")
+
+SEMICOLON = pp.Literal(";").suppress()
+LBRACE, RBRACE = map(pp.Suppress, map(pp.Literal, ["{", "}"]))
+LPAREN, RPAREN = map(pp.Suppress, map(pp.Literal, ["(", ")"]))
+
+identifier = pp.Word(pp.alphas+"_", pp.alphanums+"_")
+comment = (single_line_comment | multiline_comment).suppress()
+package = pp.Keyword("package") + pp.delimited_list(identifier, ".", combine=True) + SEMICOLON
+
+modifier = pp.one_of([
+    "Annotation",
+    "public",
+    "protected",
+    "private",
+    "static" ,
+    "abstract",
+    "final",
+    "native",
+    "synchronized",
+    "transient",
+    "volatile",
+    "strictfp"
+], as_keyword=True)
+
+# we don't care about a method's block, but need to deal with the fact it might
+# have even more nested brackets
+block = pp.nested_expr("{", "}")
+
+#   { junk {} }
+
+class_body = pp.Forward()
+enum_declaration = pp.Keyword("enum") + identifier  + ... + RBRACE
+normal_class_declaration = pp.Keyword("class") + identifier + ... + LBRACE + class_body  + RBRACE
+interface_declaration = (pp.Literal("@") + pp.Literal("interface")) | pp.Keyword("interface") + identifier + ... + RBRACE
+class_declaration = normal_class_declaration | enum_declaration
+class_or_interface_declaration = modifier[...] + (class_declaration | interface_declaration)
+compilation_unit = pp.Opt(package) + ... + class_or_interface_declaration[...]
+
+# one identifier: ctor
+# two identifiers: return type followed by method name
+method_declaration = (modifier[...] + identifier[1,2] + LPAREN + ... + RPAREN + block)
+
+member_declaration = class_declaration | interface_declaration | method_declaration
+class_body_declaration_inner= (
+    (pp.Keyword("static") + block) | (modifier[...] + member_declaration) | SEMICOLON)
+
+class_body_declaration_inner= modifier[...] + member_declaration 
+
+# there are probably other elements inside a class or even variations we missed,
+# we just ignore them
+class_body_declaration = pp.SkipTo(class_body_declaration_inner) + class_body_declaration_inner
+
+class_body <<= class_body_declaration[...]
+
+def test_pp_block():
+    single_block = "{}"
+    nested_block = "{{}}"
+    single_block_with_junk = "{junk etc}"
+    nested_blocks_with_junk = "{junk { even more } and more {} do { blah blah }}"
+    block.parse_string(single_block, parse_all=True)
+    block.parse_string(nested_block, parse_all=True)
+    block.parse_string(single_block_with_junk, parse_all=True)
+    block.parse_string(nested_blocks_with_junk, parse_all=True)
+
+def test_pp_method_parse():
+    some_method = """static public retType theFunction(i don't care...) { 
+        don't care about what's inside at all
+        even if there are more brackets inside {}
+        or quoted brackets which we don't care about either: "{}" "{
+
+        }"
+        }"""
+    method_declaration.parse_string(some_method, parse_all=True)
+
+    ctor = "public Main() {}"
+    method_declaration.parse_string(ctor, parse_all=True)
+    
+def test_pp_class_parse():
+    basic_class = """class MyClass implements some junk and stuff {
+        void myFunction(){
+
+        }
+        other junk inside will be ignored
+
+        @or this
+        class InnerClass {
+            static class AnotherInnerClass I don't even know if it compiles {
+                ;
+
+            }
+        }
+        ;
+        class AnotherInnerClass 
+        { }
+    }"""
+
+    basic_class = """class MyClass implements some junk and watnot {
+        {}
+        junk 
+        ;{{}}
+        more junk
+        LikeACtor() {
+
+        }
+        {}
+        even junk with braces {{}}
+        static {}
+        {}
+        void bar() {
+
+        }
+    }"""
+
+    res = class_declaration.parse_string(basic_class, parse_all=True)
+    print(res)
+    assert set(res).issuperset(["MyClass", "LikeACtor", "bar"])

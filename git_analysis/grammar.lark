@@ -1,0 +1,37 @@
+start: member*
+
+%import common.NUMBER
+%import common.WORD
+%import common.WS
+%import common.C_COMMENT
+%import common.CPP_COMMENT
+%ignore WS
+%ignore C_COMMENT
+%ignore CPP_COMMENT
+// ignoring strings and char ltierals
+%ignore /"(?:[^"\\]|\\.)*"/
+%ignore /'(?:[^'\\]|\\.)*'/
+
+
+
+IDENT: /[A-Za-z_$][A-Za-z_$0-9]*/
+qualified_ident: IDENT ("." IDENT)
+
+
+_balanced{op, cls, reg}: op (_balanced{op, cls, reg} | reg)* cls
+_delimited{inner, delim}: inner (delim inner)*
+
+// class
+_type_args: _balanced{"<", ">", _DONT_CARE}
+_type: IDENT [_type_args] ("." IDENT [_type_args])*
+inheritance: ["extends" _delimited{_type, ","}] ["implements" _delimited{_type, ","}]
+class: MODIFIER* CLASS_KEYWORD IDENT [_type_args] inheritance "{" member* "}"
+
+
+// method
+_method_body: _balanced{"{", "}", _DONT_CARE}
+_params: _balanced{"(", ")", _DONT_CARE}
+method: MODIFIER* [_type_args] _type IDENT _params (_method_body | ";")
+
+member: (class | method) | _DONT_CARE
+

@@ -1,8 +1,10 @@
-from __future__ import annotations
+from __future__ import annotations, nested_scopes
 from typing import Union
 from logging import basicConfig
 import pyparsing as pp
-# pp.ParserElement.enable_packrat()
+import pyparsing.diagram as ppd
+pp.ParserElement.enable_packrat()
+pp.enable_all_warnings()
 
 from typing import List, NamedTuple, Optional
 
@@ -27,11 +29,10 @@ class JavaFile(NamedTuple):
 single_line_comment = pp.Literal("//") + ... + pp.line_end
 multiline_comment = pp.Literal("/*") + ... + pp.Literal("*/")
 
-SEMICOLON = pp.Literal(";").suppress()
-LBRACE, RBRACE = map(pp.Suppress, map(pp.Literal, ["{", "}"]))
-LPAREN, RPAREN = map(pp.Suppress, map(pp.Literal, ["(", ")"]))
+SEMICOLON = pp.Suppress(";").suppress()
+LBRACE, RBRACE = map(pp.Suppress, ["{", "}"])
+LPAREN, RPAREN = map(pp.Suppress, ["(", ")"])
 
-identifier = pp.Word(pp.alphas+"_$", pp.alphanums+"_$")
 comment = (single_line_comment | multiline_comment).suppress()
 
 # we don't really care about modifiers, but putting them might
@@ -53,6 +54,7 @@ modifier = pp.one_of([
 ], as_keyword=True)
 
 
+identifier = pp.Word(pp.alphas+"_$", pp.alphanums+"_$")
 # types
 
 # generic, array, namespaced, etc...
@@ -84,19 +86,18 @@ def method_parse_action(res: pp.ParseResults) -> Method:
 ctor_or_method_declaration.set_parse_action(method_parse_action)
 ctor_or_method_declaration.ignore(comment)
 
-
 # class/interface/enum class/annotation etc..
 
 class_declaration = pp.Forward()
-class_member = pp.Forward()
+class_keyword = pp.one_of(["enum", "class", "interface", "@interface"], as_keyword=True)
 
-class_member <<= class_declaration | ctor_or_method_declaration
+class_declaration_without_body = (modifier[...] + class_keyword + identifier("name") + pp.SkipTo("{"))
+class_member = class_declaration | ctor_or_method_declaration
 
 class_body = LBRACE + pp.Group(class_member[...])("classes") + RBRACE
 # opt_extends = pp.Opt(pp.Keyword("extends") + pp.delimited_list(type_, delim=",", combine=True)).suppress()
 # opt_implements = pp.Opt(pp.Keyword("implements") + pp.delimited_list(type_, delim=",", combine=True)).suppress()
-class_declaration <<= pp.Located(modifier[...] + pp.one_of(["enum", "class", "interface", "@interface"],
-                               as_keyword=True) + identifier("name") + ... + class_body)
+class_declaration <<= pp.Located(class_declaration_without_body + class_body)
 
 
 def class_declaration_parse_action(res: pp.ParseResults) -> Class:
@@ -121,7 +122,8 @@ def test_pp_type():
         "Foo",
         "T[]",
         "ArrayList<Foo>[][]",
-        "ArrayList<ArrayList<T>[][]>[][][]"
+        "ArrayList<ArrayList<T>[][]>[][][]",
+        "Type.Nested.Nested[]"
     ]
     for t in types:
         type_.parse_string(t, parse_all=True)
@@ -142,7 +144,7 @@ def test_pp_method_parse():
 
 def test_pp_lone_class():
     raw = """
-    class Class {
+    public class Class {
         int foo() {
 
         }
@@ -171,6 +173,9 @@ def test_pp_single_nested_class():
             void foo() {
 
             }
+            void bar() {
+
+            }
         }
     }
     """
@@ -179,6 +184,7 @@ def test_pp_single_nested_class():
     assert res.name == "Class"
     assert res.members[0].name == "Inner"
     assert res.members[0].members[0].name == "foo"
+    assert res.members[0].members[1].name == "bar"
 
 
 def test_pp_multiple_nested_classes():
@@ -210,15 +216,58 @@ def test_pp_multiple_nested_classes():
     assert res.members[2].name == "aMethod"
     assert res.members[3].name == "AnotherClass"
     
+
+
+
+import pprint
+
+class_member = pp.Forward()
+class_members = pp.Group(class_member[...])
+clazz = class_keyword + identifier("class_name") + LBRACE + class_members + RBRACE
+
+# not_class = pp.SkipTo(class_keyword)
+class_member <<= clazz | not_class
+
+
+        # int notInMyGrammar = doo();
+        # @Override // nor is this one
+        # void foo() {}
+
+def test_fooz():
+    raw = """
+     class Test {
+        class Nested {
+            class Fee {
+
+            }
+        }
+        class SecondNested {
+        }
+    }
+    """
+    raw = "class Foo { class Bar {} junk etc class Ter {}} "
+
+    res = clazz.parse_string(raw, parse_all=False)
+    pprint.pprint(res)
+
 def test_pp_class_with_unrecognized_elements():
     raw = """
     class Class {
         int notInMyGrammar = doo();
         @Override // nor is this one
         void foo() {}
+        class Nested {
+            class Fee {
+
+            }
+        }
+        class SecondNested {
+        }
     }
     """
 
     res: Class = class_declaration.parse_string(raw, parse_all=True)[0]
     assert res.name == "Class"
     assert res.members[0].name == "foo"
+    assert res.members[1].name == "Nested"
+    assert res.members[1].members[0].name == "Fee"

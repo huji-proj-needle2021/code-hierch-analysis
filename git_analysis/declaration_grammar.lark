@@ -1,28 +1,3 @@
-// A bunch of words
-start: NOT_BRACE* block
-
-
-balanced{opener,closer, reg}: opener ([reg] [balanced{opener, closer, reg}])* closer 
-
-
-
-
-
-// might care about contents inside braces (class/method identifier)
-NOT_BRACE: /[^{}]+/
-
-// don't care about contents of type parameters
-_NOT_ANG: /[^<>]+/
-
-type_parameters: balanced{"<",">", _NOT_ANG}
-block: balanced{"{", "}", NOT_BRACE}
-
-
-// parsing Java stuff maybe
-IDENT: /[A-Za-z_$][A-Za-z_$0-9]*/
-type: IDENT ("." IDENT)* [type_parameters] ("[" "]")*
-
-
 // imports WORD from library
 %import common.WORD   
 
@@ -32,11 +7,18 @@ type: IDENT ("." IDENT)* [type_parameters] ("[" "]")*
 %import common.CPP_COMMENT
 
 
-// %ignore /[^{}]/
-
-
 %ignore C_COMMENT
 %ignore CPP_COMMENT
 %ignore WS
 %ignore ESCAPED_STRING
 %ignore /'[^']*'/
+
+
+start: ([NOT_BRACE] block)*
+NOT_BRACE: /[^{}]+/
+block: "{" ([NOT_BRACE] [block])* "}"
+
+
+
+
+
