@@ -2,13 +2,15 @@
     which will act as the items in the itemset algorithm, and a class for matching
     byte positions to the Java hierarchy they belong to.
 """
-from typing import NamedTuple, Optional, Tuple, List
+from typing import NamedTuple, Optional, Tuple, List, Iterable
 from enum import IntEnum
 from .java_type import JavaHierarchy, JavaIdentifier, HierarchyType, JavaFile, JavaClass, JavaMethod
 
 class PosToJavaUnitMatcher:
     """ Responsible for matching byte positions in the original file, to
         the Java hierarchy that they belong to. Positions are assumed to be given in an ascending order"""
+
+    __slots__ = ['_it', '_cur', '_next']
     def __init__(self, root: JavaHierarchy):
         self._it = root.iterate_dfs_preorder()
         self._cur = next(self._it)
@@ -33,6 +35,20 @@ class PosToJavaUnitMatcher:
             candidate  = candidate.parent
         return candidate
 
+    def find_range(self, from_pos: int, to_pos: int) -> Iterable[JavaHierarchy]:
+        """ Finds the most specific Java hierarchies to which bytes changed
+            at the given range belong to. Like `find`, this assumes byte ranges
+            are given in monotonically ascending order.
+        """
+        cur_hierch = self.find(from_pos)
+        yield cur_hierch
+
+        while self._next is not None and self._next.start < to_pos:
+            yield self._next
+            self._cur = self._next
+            self._next = next(self._it, None)
+
+
 class ChangeType(IntEnum):
     """ The kind of change reflected by a git diff line. """
     ADD = 0
@@ -40,13 +56,12 @@ class ChangeType(IntEnum):
     # it modified
     MODIFY = 1 
     DELETE = 2
-    UNSUPPORTED = 3
 
 class JavaChange(NamedTuple):
     """ A change in Java source code (add/modify/remove) at a particular level
         of the hierarchy.
     """
-    changed_hierarchy: JavaIdentifier
+    identifier: JavaIdentifier
     change_type: ChangeType
 
 def test_pos_to_java_unit_matcher():
@@ -73,3 +88,12 @@ def test_pos_to_java_unit_matcher():
     assert finder.find(120).name == "C2M1"
     assert finder.find(160).name == "C2M2"
     assert finder.find(180).name == "F"
+
+    finder = PosToJavaUnitMatcher(tree)
+    assert [h.name for h in finder.find_range(0, 40)] == ["F", "C1", "C1M1"]
+    finder = PosToJavaUnitMatcher(tree)
+    assert [h.name for h in finder.find_range(0, 105)] == ["F", "C1", "C1M1", "C1M2"]
+    finder = PosToJavaUnitMatcher(tree)
+    assert [h.name for h in finder.find_range(0, 106)] == ["F", "C1", "C1M1", "C1M2", "C2"]
+    finder = PosToJavaUnitMatcher(tree)
+    assert [h.name for h in finder.find_range(0, 180)] == ["F", "C1", "C1M1", "C1M2", "C2", "C2M1", "C2M2"]

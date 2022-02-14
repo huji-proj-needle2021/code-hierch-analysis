@@ -1,48 +1,28 @@
 """
-This module is responsible for attributing changes in a git diff (a list of added/removed lines in the source code) 
-to the kind of Java code that is responsible for them (a method, class or package), which we denote as "JavaHierarchy",
-as they represent various hierarchies in code modularization)
-
-Since Git has no understanding of source code, this requires us to manually parse the file changes and detect
-if a line is enclosed in a method declaration, a class declaration or a package. 
-
-We do this via Regex, which works in most cases but might have mistakes in pathological cases 
-(e.g, detecting a commented method declaration below the real one)
-A proper Java parsing tool would be more appropriate, but it would be more complex to integrate to the project
-and possibly slower, as we only care about very few elements in the syntax tree.
+This module is responsible for attributing changes in a git diff (which operates on raw text, and has no understanding of the source code)
+into Java code hierarchies that contain them - packages, classes and methods. This is done by parsing
+the source files changed within a diff(see `java_parser` module) and matching each hunk of changed text
+to the nearest Java elements that contain them, based on their byte offsets in the file.
 
 """
 from __future__ import annotations
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Optional, List, Iterable, Tuple, NamedTuple
-from enum import IntEnum
+from typing import Any, Optional, List, Iterable, Tuple, NamedTuple, Set
 import pygit2
 import logging
-from .java_parser import parse_java_file, JavaPackage, JavaClass, JavaMethod
-from .java_change import JavaChange, ChangeType, JavaIdentifier
-
+from .java_decl_parser import JavaParser, JavaHierarchy
+from .java_change import JavaChange, ChangeType, JavaIdentifier, PosToJavaUnitMatcher
+import subprocess
 
 log = logging.getLogger("java_change_detector")
 
-
-def java_package_to_changes(package: JavaPackage, change_type: ChangeType) -> Iterable[JavaChange]:
-    if len(package.classes) == 0:
-        yield JavaChange(changed_hierarchy=JavaIdentifier(package=package.name), change_type=change_type)
-    for clazz in package.classes:
-        if len(clazz.methods) == 0:
-            yield JavaChange(changed_hierarchy=JavaIdentifier(package=package.name, class_name=clazz.name), change_type=change_type)
-        for method in clazz.methods:
-            yield JavaChange(changed_hierarchy=JavaIdentifier(package=package.name, class_name=clazz.name, method_name=method.name),
-                                change_type=change_type)
 
 class GitHunkOffsets(NamedTuple):
     """ This class contains the byte offsets of the text that was added or deleted
         in a Git diff
         
         (The pygit2 hunk object provides information about line number ranges, we
-        prefer to deal with byte offset ranges due to our use of Regex which doesn't
-        automatically associate matches with line numbers)
+        prefer to deal with byte offset ranges since Java statements aren't necessarily
+        line oriented)
     """
 
     # (inclusive, exclusive)
@@ -76,64 +56,87 @@ class GitHunkOffsets(NamedTuple):
         return GitHunkOffsets(deleted_byte_range=deleted_byte_range,
                               added_byte_range=added_byte_range)
 
+    def display(self, old: Optional[bytes], new: Optional[bytes]) -> str:
+        """ Displays the hunk(given the raw contents of the old and new files it
+            was produced from) """
+        st = []
+        if old is not None and self.deleted_byte_range is not None:
+            old_from, old_to = self.deleted_byte_range
+            old_st = str(old[old_from: old_to], 'latin-1')
+            st.append(f"-\t{repr(old_st)}")
+        if new is not None and self.added_byte_range is not None:
+            new_from, new_to = self.added_byte_range
+            new_st = str(new[new_from: new_to], 'latin-1')
+            st.append(f"+\t{repr(new_st)}")
+        return "\n".join(st)
 class JavaChangeDetector:
     """ Used to determine changes to a Java project via git """
 
     def __init__(self, repo: pygit2.Repository):
         self.__repo = repo
+        self.__parser = JavaParser()
 
     def identify_changes_new_file(self, patch) -> Iterable[JavaChange]:
 
         new_file = patch.delta.new_file
         new_file_contents: bytes = self.__repo[new_file.id].data
-        
-        log.debug(f"Identifying changes in an added file {new_file.path}")
-        new_package = parse_java_file(new_file_contents, new_file.path)
-        return new_package.to_changes(ChangeType.ADD)
+
+        log.debug(f"Identifying changes in a new file {new_file.path}")
+
+        hierarchy = self.__parser.parse_java_bytes(new_file_contents)
+        for hierch in hierarchy.iterate_dfs_preorder():
+            yield JavaChange(identifier=JavaIdentifier(hierch), change_type=ChangeType.ADD)
 
     def identify_changes_deleted_file(self, patch) -> Iterable[JavaChange]:
         deleted_file = patch.delta.old_file
         deleted_file_contents: bytes = self.__repo[deleted_file.id].data
         
         log.debug(f"Identifying changes in a deleted file {deleted_file.path}")
-        deleted_package = parse_java_file(deleted_file_contents, deleted_file.path)
-        return deleted_package.to_changes(ChangeType.DELETE)
+
+        hierarchy = self.__parser.parse_java_bytes(deleted_file_contents)
+        for hierch in hierarchy.iterate_dfs_preorder():
+            yield JavaChange(identifier=JavaIdentifier(hierch), change_type=ChangeType.DELETE)
 
     def identify_changes_modified_file(self, patch) -> Iterable[JavaChange]:
-        previous_file = patch.delta.old_file
+        old_file = patch.delta.old_file
         new_file = patch.delta.new_file
-        previous_content: bytes = self.__repo[previous_file.id].data
+        old_content: bytes = self.__repo[old_file.id].data
         new_content: bytes = self.__repo[new_file.id].data
 
-        log.debug(f"Identifying changes in a modified file {previous_file.path}")
-
-        previous_parsed_ast = parse_java_file(previous_content, previous_file.path)
-        new_parsed_ast = parse_java_file(new_content, previous_file.path)
-
-        cur_old_package = previous_parsed_ast
-        cur_new_package = new_parsed_ast
-        cur_old_class, cur_old_method = None, None
-        cur_new_class, cur_new_method = None, None
+        log.debug(f"Identifying changes in a modified file {old_file.path}")
+        old_hierch = self.__parser.parse_java_bytes(old_content)
+        new_hierch = self.__parser.parse_java_bytes(new_content)
+        old_hierch_matcher = PosToJavaUnitMatcher(old_hierch)
+        new_hierch_matcher = PosToJavaUnitMatcher(new_hierch)
+        deletes: Set[JavaIdentifier] = set()
+        adds: Set[JavaIdentifier] = set()
         for hunk in patch.hunks:
             hunk_offsets = GitHunkOffsets.from_pygit_hunk(hunk)
+            print("Displaying hunk", hunk_offsets.display(old_content, new_content), sep="\n")
             if hunk_offsets.deleted_byte_range is not None:
-                # in the old AST, find out the java identifiers contained in the given offset
-                pass
+                deletes.update(map(JavaIdentifier, old_hierch_matcher.find_range(
+                    hunk_offsets.deleted_byte_range[0], 
+                    hunk_offsets.deleted_byte_range[1]
+                )))
             if hunk_offsets.added_byte_range is not None:
-                pass
-
-        return []
+                adds.update(map(JavaIdentifier, new_hierch_matcher.find_range(
+                    hunk_offsets.added_byte_range[0],
+                    hunk_offsets.added_byte_range[1]
+                )))
+        updates = adds & deletes
+        for add in adds:
+            if add not in updates:
+                yield JavaChange(identifier=add, change_type=ChangeType.ADD)
+        for delete in deletes:
+            if delete not in updates:
+                yield JavaChange(identifier=delete, change_type=ChangeType.DELETE)
+        for update in updates:
+                yield JavaChange(identifier=update, change_type=ChangeType.MODIFY)
 
     def identify_changes(self, patch) -> Iterable[JavaChange]:
         """ Given a git repository and patch(object that represents a difference in a file between two commits, possibly
             with renaming), determines the Java hierarchies that were changed"""
         delta = patch.delta
-        
-        for hunk in patch.hunks:
-            print("hunk", hunk.header, "old start", hunk.old_start, "new start", hunk.new_start)
-            for line in hunk.lines:
-                print("\t", line.origin, line.raw_content, "content-offset:", line.content_offset)
-
 
         status_char = delta.status_char()
         if status_char == "A":
@@ -145,4 +148,3 @@ class JavaChangeDetector:
         else:
             log.warning(f"Unsupported git delta status character '{status_char}', skipping")
             return []
-        return []

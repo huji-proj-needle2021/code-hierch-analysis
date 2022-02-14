@@ -54,6 +54,12 @@ class JavaHierarchy:
                 stack.extend(reversed(parent.members))
             yield parent
 
+    def iterate_up_to_parents(self) -> Iterator[JavaHierarchy]:
+        cur = self
+        yield self
+        while cur.parent is not None:
+            cur = cur.parent
+            yield cur
 
 JavaFile = partial(JavaHierarchy, kind=HierarchyType.package)
 JavaClass = partial(JavaHierarchy, kind=HierarchyType.type_def)
@@ -67,30 +73,40 @@ class JavaIdentifier:
     """
 
     # Java hierarchy kinds and identifiers, from most specific to most general.
-    hierarchies: List[Tuple[HierarchyType, str]]
+    hierarchies: Tuple[Tuple[HierarchyType, str], ...]
     __slots__ = ['hierarchies']
 
     def __init__(self, bottommost_hierarchy: JavaHierarchy):
-        self.hierarchies = [(bottommost_hierarchy.kind, bottommost_hierarchy.name)]
-        parent = bottommost_hierarchy.parent
-        while parent is not None:
-            self.hierarchies.append((parent.kind, parent.name))
-            parent = parent.parent
+        self.hierarchies = tuple((hierch.kind, hierch.name) for hierch in bottommost_hierarchy.iterate_up_to_parents())
+
+    @property
+    def identifier_type(self) -> HierarchyType:
+        return self.hierarchies[0][0]
 
     def __str__(self) -> str:
         return ".".join(tup[1] for tup in reversed(self.hierarchies))
+    
+    def __repr__(self) -> str:
+        return repr(self.hierarchies)
 
+    def __hash__(self) -> int:
+        return hash(self.hierarchies)
+
+    def __eq__(self, o: object) -> bool:
+        if isinstance(o, JavaIdentifier):
+            return self.hierarchies == o.hierarchies
+        return False
     
 def test_dfs():
     tree = JavaFile(start=0, end=200, name="F", members=[])
     c1 = JavaClass(
-            start=1, end=100, name="C1", kind="class", members=[], parent=tree)
+            start=1, end=100, name="C1", members=[], parent=tree)
     c1.members.extend([
         JavaMethod(start=5, end=40, name="C1M1", parent=c1),
         JavaMethod(start=41, end=80, name="C1M2", parent=c1)
     ])
     c2 = JavaClass(
-            start=105, end=180, name="C2", kind="class", members=[], parent=tree)
+            start=105, end=180, name="C2", members=[], parent=tree)
     c2.members.extend([JavaMethod(start=110, end=140, name="C2M1", parent=c2),
                         JavaMethod(start=150, end=180, name="C2M2", parent=c2)
                         ])
@@ -99,4 +115,6 @@ def test_dfs():
     assert names == ["F", "C1", "C1M1", "C1M2", "C2", "C2M1", "C2M2"]
 
     assert str(JavaIdentifier(c1)) == "F.C1"
+    assert JavaIdentifier(c1).identifier_type == HierarchyType.type_def
     assert str(JavaIdentifier(c2.members[1])) == "F.C2.C2M2"
+    assert JavaIdentifier(c2.members[1]).identifier_type == HierarchyType.method
