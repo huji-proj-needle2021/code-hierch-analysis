@@ -1,1 +1,1 @@
-from .commit_processor import CommitProcessor
+from .git_processor import GitProcessor
