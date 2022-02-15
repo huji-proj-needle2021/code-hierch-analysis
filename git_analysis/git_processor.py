@@ -112,16 +112,35 @@ class GitProcessor(AbstractContextManager):
         for commit in tqdm(walk):
             self.add_commit(commit)
 
+    def process_all_prs(self):
+        prs = self.get_github_prs()
+        processed, unprocessed = [], []
+        skipped = 0
+        for pr in tqdm(prs, desc="Processing pull requests"):
+            if pr.get("merged_at") is None:
+                skipped += 1
+                continue
+            success = self.process_pr(pr)
+            if success:
+                processed.append(pr)
+            else:
+                unprocessed.append(pr)
+        log.info(f"Processed {len(processed)} merged PRs, {len(unprocessed)} PRs failed to process, "
+                 f"{skipped} rejected PRs were skipped.") 
+        self.shelve["processed"] = processed
+        self.shelve["unprocessed"] = unprocessed
+
     def process_pr(self, pr):
         log.debug(f'Processing PR #{pr["number"]} - "{pr["title"]}" ')
-        # base - start of PR
-        base_commit = self.repo.revparse_single(pr["base"]["sha"])
-        # note that the head resides in a different git repo
-        # head_commit = self.repo.revparse_single(pr["head"]["sha"])
-        if "merge_commit_sha" not in pr:
-            log.warn(f"\tAttempted to process an unmerged PR, skipping")
-            return
-        merged_commit = self.repo.revparse_single(pr["merge_commit_sha"])
+        if pr.get("merged_at") is None:
+            log.debug(f"\tAttempted to process an unmerged PR, skipping")
+            return False
+        try:
+            base_commit = self.repo.revparse_single(pr["base"]["sha"])
+            merged_commit = self.repo.revparse_single(pr["merge_commit_sha"])
+        except Exception as e:
+            log.error(f"There was an obtaining the base/merged commit in PR #{pr['number']}: {e}")
+            return False
         diff = self.repo.diff(base_commit, merged_commit, context_lines=CONTEXT_LINES)
         pr["parsed_patches"] = []
         for patch in diff:
@@ -135,6 +154,7 @@ class GitProcessor(AbstractContextManager):
                 log.debug(f'\tIdentifying Java changes in diff from "{patch_object["from"]}" to "{patch_object["to"]}" ')
                 patch_object["changes"] = list(self.change_detector.identify_changes(patch))
             pr["parsed_patches"].append(patch_object)
+        return True
 
 
     def add_commit(self, commit):

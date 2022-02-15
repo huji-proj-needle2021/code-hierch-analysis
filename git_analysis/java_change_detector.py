@@ -112,7 +112,7 @@ class JavaChangeDetector:
         adds: Set[JavaIdentifier] = set()
         for hunk in patch.hunks:
             hunk_offsets = GitHunkOffsets.from_pygit_hunk(hunk)
-            print("Displaying hunk", hunk_offsets.display(old_content, new_content), sep="\n")
+            # print("Displaying hunk", hunk_offsets.display(old_content, new_content), sep="\n")
             if hunk_offsets.deleted_byte_range is not None:
                 deletes.update(map(JavaIdentifier, old_hierch_matcher.find_range(
                     hunk_offsets.deleted_byte_range[0], 

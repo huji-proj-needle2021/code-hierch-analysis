@@ -141,13 +141,16 @@ class JavaParser:
     def __init__(self):
         self.tokens: List[Token] = []
         self.lexer = JavaLexer()
+        self.text = ""
 
     def parse_java(self, text: str) -> JavaHierarchy:
+        self.text = text
         self.tokens = list(self.lexer.lex(text))
         return self._parse_file()
 
     def parse_java_bytes(self, contents: bytes) -> JavaHierarchy:
         text = contents.decode('latin-1', 'replace')
+        self.text = text
         return self.parse_java(text)
 
     def __getitem__(self, key):
@@ -278,8 +281,9 @@ class JavaParser:
             if self.tokens[i].type == token_type and self.tokens[i].value in values:
                 return i
             elif self.tokens[i].type == TokenType.SEPARATOR and self.tokens[i].value in OPENING_TO_CLOSING_SEP.keys():
-                if i - 1 > 0 and self.tokens[i].value == "{" and self.tokens[i-1].value != "->":
-                    log.warn("Skipped a block that does not follow a lambda")
+                # if i - 1 > 0 and self.tokens[i].value == "{" and self.tokens[i-1].value != "->":
+                #     ctx = self.text[self.tokens[i-10].pos : self.tokens[i+10].pos]
+                #     log.warn(f"Skipped a block that does not follow a lambda, context: {ctx}")
                 i = self._find_closing_bracket(i) + 1
             else:
                 i += 1
