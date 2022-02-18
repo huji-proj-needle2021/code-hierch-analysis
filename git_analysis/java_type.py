@@ -76,8 +76,13 @@ class JavaIdentifier:
     hierarchies: Tuple[Tuple[HierarchyType, str], ...]
     __slots__ = ['hierarchies']
 
-    def __init__(self, bottommost_hierarchy: JavaHierarchy):
-        self.hierarchies = tuple((hierch.kind, hierch.name) for hierch in bottommost_hierarchy.iterate_up_to_parents())
+    def __init__(self, hierarchies: Tuple[Tuple[HierarchyType, str], ...]):
+        self.hierarchies = hierarchies
+
+    @staticmethod
+    def from_bottommost_hierarchy(bottommost_hierarchy: JavaHierarchy):
+        return JavaIdentifier(tuple((hierch.kind, hierch.name)
+                                    for hierch in bottommost_hierarchy.iterate_up_to_parents()))
 
     @property
     def identifier_type(self) -> HierarchyType:
@@ -97,3 +102,18 @@ class JavaIdentifier:
             return self.hierarchies == o.hierarchies
         return False
     
+
+    def as_method(self) -> Optional[JavaIdentifier]:
+        if self.identifier_type == HierarchyType.method:
+            return self
+        return None
+    
+    def as_class(self) -> Optional[JavaIdentifier]:
+        if self.identifier_type == HierarchyType.type_def:
+           return self
+        elif self.identifier_type == HierarchyType.package:
+            return None
+        return JavaIdentifier(self.hierarchies[1:])
+
+    def as_package(self) -> JavaIdentifier:
+        return JavaIdentifier((self.hierarchies[-1],))

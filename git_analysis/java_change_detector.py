@@ -85,7 +85,8 @@ class JavaChangeDetector:
 
         hierarchy = self.__parser.parse_java_bytes(new_file_contents)
         for hierch in hierarchy.iterate_dfs_preorder():
-            yield JavaChange(identifier=JavaIdentifier(hierch), change_type=ChangeType.ADD)
+            yield JavaChange(identifier=JavaIdentifier.from_bottommost_hierarchy(hierch),
+                             change_type=ChangeType.ADD)
 
     def identify_changes_deleted_file(self, patch) -> Iterable[JavaChange]:
         deleted_file = patch.delta.old_file
@@ -95,7 +96,8 @@ class JavaChangeDetector:
 
         hierarchy = self.__parser.parse_java_bytes(deleted_file_contents)
         for hierch in hierarchy.iterate_dfs_preorder():
-            yield JavaChange(identifier=JavaIdentifier(hierch), change_type=ChangeType.DELETE)
+            yield JavaChange(identifier=JavaIdentifier.from_bottommost_hierarchy(hierch),
+                             change_type=ChangeType.DELETE)
 
     def identify_changes_modified_file(self, patch) -> Iterable[JavaChange]:
         old_file = patch.delta.old_file
@@ -114,12 +116,12 @@ class JavaChangeDetector:
             hunk_offsets = GitHunkOffsets.from_pygit_hunk(hunk)
             # print("Displaying hunk", hunk_offsets.display(old_content, new_content), sep="\n")
             if hunk_offsets.deleted_byte_range is not None:
-                deletes.update(map(JavaIdentifier, old_hierch_matcher.find_range(
+                deletes.update(map(JavaIdentifier.from_bottommost_hierarchy, old_hierch_matcher.find_range(
                     hunk_offsets.deleted_byte_range[0], 
                     hunk_offsets.deleted_byte_range[1]
                 )))
             if hunk_offsets.added_byte_range is not None:
-                adds.update(map(JavaIdentifier, new_hierch_matcher.find_range(
+                adds.update(map(JavaIdentifier.from_bottommost_hierarchy, new_hierch_matcher.find_range(
                     hunk_offsets.added_byte_range[0],
                     hunk_offsets.added_byte_range[1]
                 )))

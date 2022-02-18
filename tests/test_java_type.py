@@ -17,7 +17,23 @@ def test_dfs():
     names = [h.name for h in tree.iterate_dfs_preorder()]
     assert names == ["F", "C1", "C1M1", "C1M2", "C2", "C2M1", "C2M2"]
 
-    assert str(JavaIdentifier(c1)) == "F.C1"
-    assert JavaIdentifier(c1).identifier_type == HierarchyType.type_def
-    assert str(JavaIdentifier(c2.members[1])) == "F.C2.C2M2"
-    assert JavaIdentifier(c2.members[1]).identifier_type == HierarchyType.method
+    f = JavaIdentifier.from_bottommost_hierarchy(tree)
+    assert str(f) == "F"
+    assert f.as_package() == f
+    assert f.as_class() is None
+    assert f.as_method() is None
+
+    fc1 = JavaIdentifier.from_bottommost_hierarchy(c1)
+    assert str(fc1) == "F.C1"
+    assert fc1.as_class() == fc1
+    assert fc1.as_method() is None
+    assert str(fc1.as_package()) == "F"
+
+    assert JavaIdentifier.from_bottommost_hierarchy(c1).identifier_type == HierarchyType.type_def
+    c2m2 = JavaIdentifier.from_bottommost_hierarchy(c2.members[1])
+
+    assert str(c2m2) == "F.C2.C2M2"
+    assert c2m2.identifier_type == HierarchyType.method
+    assert c2m2.as_method() == c2m2
+    assert str(c2m2.as_class()) == "F.C2"
+    assert str(c2m2.as_package()) == "F"
