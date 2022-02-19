@@ -130,6 +130,12 @@ class GitProcessor(AbstractContextManager):
         self.shelve["processed"] = processed
         self.shelve["unprocessed"] = unprocessed
 
+    def get_processed_prs(self, refresh=False):
+        prs = self.get_github_prs(refresh=refresh)
+        if "processed" not in self.shelve or refresh:
+            self.process_all_prs(prs)
+        return self.shelve["processed"]
+
     def process_pr(self, pr):
         log.debug(f'Processing PR #{pr["number"]} - "{pr["title"]}" ')
         if pr.get("merged_at") is None:
