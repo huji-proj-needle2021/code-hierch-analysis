@@ -1,9 +1,10 @@
 # %%
 from typing import Any, Mapping, Optional, Iterable, Union
 from git_analysis import GitProcessor
+from git_analysis.git_processor import ParsedPatch
 from git_analysis.java_change import JavaChange, JavaIdentifier
 from mlxtend.preprocessing import TransactionEncoder
-from mlxtend.frequent_patterns import apriori
+from mlxtend.frequent_patterns import apriori, fpgrowth, fpmax
 import logging
 import pprint
 from tqdm import tqdm
@@ -12,17 +13,21 @@ import numpy as np
 
 from git_analysis.java_type import HierarchyType
 
-prs = []
-dfs: Mapping[str, pd.DataFrame] = {}
 
-def processed_prs_to_onehot_changes(prs: Iterable[Mapping[str, Any]],
-                                    hierarchy_type: HierarchyType) -> pd.DataFrame:
-    """ Given an iterable of pull requests that were processed(via GitProcessor) to
-        include Java changes (for each .java file changed in the pull request), 
-        creates dataframes with one-hot representation of the changes in each pull request,
-        using the changes(methods identifiers/class identifiers/package identifiers) as
-        columns and the pull requests they occurred in as rows.
+def convert_to_item_basket_onehot(commits_or_prs: Iterable[Mapping[str, Any]],
+                                  hierarchy_type: HierarchyType,
+                                  commit_or_pr: str) -> pd.DataFrame:
+    """ Given an iterable of commits(for each commit-parent pair) or pull requests
+        that were processed by GitProcessor, converts them to a Pandas dataframe
+        with a one-hot encoding of the baskets, suitable for use by frequent itemsets
+        algorithms.
+
+        Each row represents a basket - commit or PR
+        Each column represents a possible item, there's one row for each Java Identifier in the program.
+        (Note that we currently do not take the ChangeType into account - additions/deletions/modifies are treated
+        the same)
     """
+
     records = []
     def change_to_desired_identifier(change: JavaChange) -> Optional[JavaIdentifier]:
         if hierarchy_type == HierarchyType.method:
@@ -32,44 +37,64 @@ def processed_prs_to_onehot_changes(prs: Iterable[Mapping[str, Any]],
         if hierarchy_type == HierarchyType.package:
             return change.identifier.as_package()
         
-    for pr in prs:
-        num = pr["number"]
-        for patch in pr["parsed_patches"]:
-            changes = set(str(change_to_desired_identifier(change)) for change in patch.get("changes", [])
+
+    index_col = "number" if commit_or_pr == "pr" else "id"
+    for obj in commits_or_prs:
+        for patch in obj["parsed_patches"]:
+            patch: ParsedPatch
+            changes = set(str(change_to_desired_identifier(change)) for change in patch.changes
                             if change_to_desired_identifier(change) is not None)
+            if len(changes) == 0:
+                # skip if no .java files were changed
+                continue
             records.extend(({
-                "pr": num,
-                "change": change
+                "basket_id": obj[index_col],
+                "item": change
             } for change in changes))
     df = pd.DataFrame.from_records(records)
-    df.set_index("pr", inplace=True)
+    df.set_index("basket_id", inplace=True)
+    sparse_type = pd.SparseDtype(np.bool8, False)
     onehot = pd.get_dummies(df, prefix="", prefix_sep="")\
-               .groupby(level=0).max().astype(np.bool8)
+               .groupby(level=0).max()#.astype(sparse_type)
     
     return onehot
 
-method_df: pd.DataFrame
-class_df: pd.DataFrame
-package_df: pd.DataFrame
+prs = []
+pr_method_df: pd.DataFrame
+pr_class_df: pd.DataFrame
+pr_package_df: pd.DataFrame
+
+commits = []
+commit_method_df: pd.DataFrame
+commit_class_df: pd.DataFrame
+commit_package_df: pd.DataFrame
+
 
 def run():
-    global prs, method_df, class_df, package_df
+    global prs, pr_method_df, pr_class_df, pr_package_df
+    global commits, commit_method_df, commit_class_df, commit_package_df
     logging.basicConfig()
     logging.getLogger("git_processor").setLevel(logging.INFO)
     logging.getLogger("java_change_detector").setLevel(logging.ERROR)
     with GitProcessor("https://github.com/skylot/jadx") as git:
         prs = git.get_processed_prs()
-        method_df = processed_prs_to_onehot_changes(prs, HierarchyType.method)
-        class_df = processed_prs_to_onehot_changes(prs, HierarchyType.type_def)
-        package_df = processed_prs_to_onehot_changes(prs, HierarchyType.package)
+        commits, _ = git.get_processed_commits()
+
+        pr_method_df = convert_to_item_basket_onehot(prs, HierarchyType.method, "pr")
+        pr_class_df = convert_to_item_basket_onehot(prs, HierarchyType.type_def, "pr")
+        pr_package_df = convert_to_item_basket_onehot(prs, HierarchyType.package, "pr")
+
+        commit_method_df = convert_to_item_basket_onehot(commits, HierarchyType.method, "commit")
+        commit_class_df = convert_to_item_basket_onehot(commits, HierarchyType.type_def, "commit")
+        commit_package_df = convert_to_item_basket_onehot(commits, HierarchyType.package, "commit")
 
 if __name__ == "__main__":
     run()
 
 # %%
+%%timeit
 
-
-apriori(package_df, min_support=0.01, use_colnames=True)
-
+res = apriori(pr_method_df, min_support=0.033, use_colnames=True)
+res
 
 # %%
