@@ -15,3 +15,5 @@ mypy~=0.931
 pytest~=7.0.0
 requests~=2.27.1
 mlxtend~=0.19.0
+networkx~=2.6.3
+pyvis~=0.1.9
