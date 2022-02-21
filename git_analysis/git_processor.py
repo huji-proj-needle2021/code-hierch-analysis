@@ -139,11 +139,12 @@ class GitProcessor(AbstractContextManager):
         next_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
         link_re = re.compile(r'<([^>]+)>;\s+rel="next"')
         while next_url is not None:
-            log.info(f"Fetching PRs from Github API at {next_url}")
+            log.info(f"Fetching PRs from Github API at {next_url}, so far fetched {len(pulls)} PRs")
             r = requests.get(next_url, headers={
                 "Accept": "application/vnd.github.v3+json"
             }, params={
-                "state": "all"
+                "state": "all",
+                "per_page": "100"
             })
             r.raise_for_status()
             link = r.headers["Link"]
