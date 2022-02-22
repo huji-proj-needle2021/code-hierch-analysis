@@ -89,6 +89,18 @@ def igraph_to_cytoscape_fig(graph: igraph.Graph, max_nodes: int, max_edges: int)
     vdf = graph.get_vertex_dataframe()
     vdf.sort_values(by="pr", ascending=False, inplace=True)
 
+
+    chosen_ix = vdf[:max_nodes].index
+
+    # now, pick up to 'max_edges' edges with highest weights.
+    # nodes with no edges will be removed
+    subgraph = graph.induced_subgraph(chosen_ix)
+    edf = subgraph.get_edge_dataframe()
+    edf.sort_values(by="weight", ascending=False, inplace=True)
+
+    subgraph = subgraph.subgraph_edges(edf[:max_edges].index, delete_vertices=True)
+
+
     inferred_hierch = None
     if "name" in vdf.columns:
         inferred_hierch = HierarchyType.method
@@ -96,23 +108,12 @@ def igraph_to_cytoscape_fig(graph: igraph.Graph, max_nodes: int, max_edges: int)
         inferred_hierch = HierarchyType.type_def
     else:
         inferred_hierch = HierarchyType.package
-
-    chosen_ix = vdf[:max_nodes].index
-
-    # now, delete edges with the lowest weights so we hav 
-    # no more than 'max_edges' edges.
-    subgraph = graph.induced_subgraph(chosen_ix)
-    edf = subgraph.get_edge_dataframe()
-    edf.sort_values(by="weight", ascending=True, inplace=True)
-    n_edges_to_delete = max(len(edf) - max_edges, 0)
-    subgraph.delete_edges(edf[:n_edges_to_delete].index)
-
     # converting to cytoscape element format
     def vertex_name(v):
         if inferred_hierch == HierarchyType.method:
-            return v["name"]
+            return v["class"] + "." + v["method"]
         elif inferred_hierch == HierarchyType.type_def:
-            return f"{v['package']}.{v['class']}"
+            return v["class"]
         return v["package"]
     
     classes = inferred_hierch.name
