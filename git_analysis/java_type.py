@@ -16,6 +16,13 @@ class HierarchyType(IntEnum):
     type_def = auto() 
     # also covers constructors and static functions
     method = auto()
+
+    def included(self) -> List[HierarchyType]:
+        if self == HierarchyType.method:
+            return [HierarchyType.method, HierarchyType.type_def, HierarchyType.package]
+        if self == HierarchyType.type_def:
+            return [HierarchyType.type_def, HierarchyType.package]
+        return [HierarchyType.package]
     
 
 class JavaHierarchy:

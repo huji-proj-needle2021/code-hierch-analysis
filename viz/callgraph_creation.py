@@ -90,7 +90,7 @@ def create_callgraph(n_clicks, out_dir, jar_dir, edge_filter, jar_filter, main_i
             main_class_identifier=main_identifier,
             graph_output_folder=Path(out_dir).resolve(),
         )
-        cg = args.run_callgraph(GEN_CALLGRAPH_JAR)
-        return dict(graph_state=f"Created a graph with {len(cg.node_props)} nodes and {len(cg.edges)} edges ",
+        cg = args.run_callgraph(GEN_CALLGRAPH_JAR, force_regen=True)
+        return dict(graph_state=f"Created a graph with {len(cg.vertices)} nodes and {len(cg.edges)} edges ",
                     import_dir=out_dir)
     return dict(graph_state=graph_state, import_dir=import_dir)

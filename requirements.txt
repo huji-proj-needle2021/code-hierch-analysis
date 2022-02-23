@@ -29,3 +29,4 @@ dash~=2.2.0
 dash-cytoscape~=0.3.0
 jupyter-dash~=0.4.1
 pyvis~=0.1.9
+Flask-Caching~=1.10.1

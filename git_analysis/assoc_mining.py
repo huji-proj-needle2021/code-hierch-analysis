@@ -8,7 +8,7 @@ import logging
 from tqdm import tqdm
 import pandas as pd
 import numpy as np
-from graph_import import GraphData
+from graph.graph_data import GraphData
 import json
 
 log = logging.getLogger("assoc_mining")
@@ -87,9 +87,6 @@ class Model(NamedTuple):
     def describe(self) -> str:
         return (f"#baskets: {len(self.one_hot)} #items: {len(self.one_hot.columns)} "
                 f"#freq itemsets: {len(self.freq_itemsets)} #rules: {len(self.assoc_rules)}")
-
-def model_to_graph_data(model: Model) -> GraphData:
-    pass
 
 class AssocAnalyzer:
     """ Helper class for analyzing git changes via association rules.
