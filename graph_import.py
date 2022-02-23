@@ -43,7 +43,7 @@ class Args:
             ret = subprocess.call(args)
             if ret != 0:
                 log.error(f"Generating callgraphs failed")
-                sys.exit(ret)
+                raise ValueError("Generating callgraph failed, see log for details")
             
             # on success, generate metadata for caching purposes
             with open(self.graph_output_folder / "meta.json", 'w', encoding='utf-8') as meta:
