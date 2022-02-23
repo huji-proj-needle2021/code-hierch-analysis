@@ -5,7 +5,7 @@
 from dash import html, dcc, Input, Output, State
 from dash.development.base_component import Component
 from dash.exceptions import PreventUpdate
-from graph_import import Args, GEN_CALLGRAPH_JAR
+from graph_import import Args, GEN_CALLGRAPH_JAR, GRAPH_DIR
 from pathlib import Path
 from .app import app, field
 
@@ -18,12 +18,9 @@ graph_create_status = html.Div(children=[
 graph_create = html.Div(children=[
     html.H2(children="Callgraph generation options"),
 
-    # html.Label(children="Graph directory where the call graph will be created and imported from", htmlFor="out_dir"),
-    # dcc.Input(id="out_dir", type="text", placeholder="Folder that will contain graph data",
-    #           value="graphImport-jadx"),
-    field("Output folder for generated callgraph (where it can be imported from)",
-          dcc.Input(id="out_dir", type="text", placeholder="Folder that will contain graph data",
-                    value="graphImport-jadx")),
+    field(f"Name of output folder containing graph (will be placed under {GRAPH_DIR.resolve()} ",
+          dcc.Input(id="out_dir", type="text", placeholder="Name of folder",
+                    value="jadx")),
 
     field("Folder that contains .jar files for generating a call graph",
           dcc.Input(id="jar_dir", type="text", placeholder="Folder containing .jar files",
@@ -35,12 +32,12 @@ graph_create = html.Div(children=[
 
     field("Words that should appear in a .jar file. A file without any of these words will be skipped",
           dcc.Dropdown(id="jar_filter", multi=True, placeholder="Type any word, e.g 'jadx' ",
-                       value=["jadx"])),
+                       value=["jadx"], options=["jadx"])),
 
 
     field("Words that should appear in an edge's source and target identifiers. An edge without any of these words will be skipped",
           dcc.Dropdown(id="edge_filter", multi=True, placeholder="Type any word, e.g 'jadx' ",
-                       value=["jadx"])),
+                       value=["jadx"], options=["jadx"])),
 
     html.Button("Create callgraph", id="create_cg"),
     graph_create_status,
@@ -88,7 +85,7 @@ def create_callgraph(n_clicks, out_dir, jar_dir, edge_filter, jar_filter, main_i
             edge_filter=list(edge_filter) if edge_filter else [],
             jar_filter=list(jar_filter) if jar_filter else [],
             main_class_identifier=main_identifier,
-            graph_output_folder=Path(out_dir).resolve(),
+            graph_output_folder=(GRAPH_DIR / out_dir).resolve(),
         )
         cg = args.run_callgraph(GEN_CALLGRAPH_JAR, force_regen=True)
         return dict(graph_state=f"Created a graph with {len(cg.vertices)} nodes and {len(cg.edges)} edges ",
