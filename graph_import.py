@@ -1,3 +1,4 @@
+""" A wrapper for generating callgraphs via 'genCallgraph.jar' in Python """
 # %%
 from __future__ import annotations
 import subprocess
@@ -10,6 +11,7 @@ import logging
 from dataclasses import dataclass
 import json
 from graph.graph_data import GraphData, path_contains_graph
+from graph.graph_logic import ConversionArgs
 
 
 log = logging.getLogger("graph_import")
@@ -82,5 +84,6 @@ def run(refresh=False):
 
 
 if __name__ == "__main__":
+    from graph.graph_logic import raw_graph_to_igraph
     cg = run()
-    print(cg.vertices)
+    ig = raw_graph_to_igraph(cg, ConversionArgs(hierch=HierarchyType.method))

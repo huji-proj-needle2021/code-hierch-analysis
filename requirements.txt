@@ -6,9 +6,6 @@ matplotlib~=3.5.1
 seaborn~=0.11.2
 jupyterlab~=3.2.8
 scikit-learn~=1.0.2
-spacy~=3.2.1
-nltk~=3.6.7
-wordcloud~=1.8.1
 
 # general python utilities
 tqdm~=4.62.3
@@ -16,6 +13,7 @@ pytest~=7.0.0
 requests~=2.27.1
 mypy~=0.931
 tabulate~=0.8.9
+typing-extensions~=4.1.1
 
 # specific to our algorithms
 pygit2~=1.7.2

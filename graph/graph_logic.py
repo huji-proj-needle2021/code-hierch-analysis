@@ -2,7 +2,8 @@
     for exploring and visualizing a graph in the visualization
 """
 
-from typing import List, Optional
+from typing import List, NamedTuple, Optional, Tuple, Union
+from typing_extensions import TypedDict
 import igraph
 # from .app import cache
 from .graph_data import GraphData
@@ -10,18 +11,33 @@ from git_analysis.java_type import HierarchyType
 from pathlib import Path
 import pandas as pd
 
-def raw_graph_to_igraph(raw: GraphData, hierch: HierarchyType) -> igraph.Graph:
+class ConversionArgs(NamedTuple):
+    hierch: Union[HierarchyType, str]
+    damping_factor: float = 0.85
+    resolution: float = 1.0
+    community_iters: int = 50
 
-    assert int(hierch) <= int(raw.hierch), "cannot constrict a graph to a higher hierarchy"
+def raw_graph_to_igraph(raw: GraphData, args: ConversionArgs) -> Tuple[igraph.Graph, igraph.VertexClustering]:
+    """ Converts a graph (whether a call graph or a graph from association rules)
+        into igraph representation, optionally constricting the graph's hierarchy(combining nodes and edges
+        with the same package/class)
+        
+        Calculates page rank values and assigns communities to nodes, to be used in visualization.
+        Returns the igraph along with a 'VertexClustering' object that will allow us to explore specific
+        communities
+    """
+    hierch = HierarchyType[args.hierch] if isinstance(args.hierch, str) else args.hierch 
+    assert hierch in raw.hierch.included(), "cannot constrict a graph into a higher hierarchy than its own"
 
     edges = raw.edges
     if "weight" in raw.edges.columns:
         edges["weight"] = raw.edges["weight"]
+    elif "confidence" in raw.edges.columns:
+        edges["weight"] = raw.edges["confidence"]
     else:
         edges["weight"] = 1
     vertices = raw.vertices.reset_index()
 
-    print("converting raw to igraph",  hierch)
     graph = igraph.Graph.DataFrame(edges, directed=True,
                                     vertices=vertices)
 
@@ -57,16 +73,20 @@ def raw_graph_to_igraph(raw: GraphData, hierch: HierarchyType) -> igraph.Graph:
         # e.g, a lot of activity or some kind of god class/package (in the callgraph model),
         # or something that changes very often(git diff model) so we may want to keep them.
         # We do combine parallel edges though, they just clutter the graph
-        graph.simplify(multiple=True, loops=False, combine_edges="sum")
+        graph.simplify(multiple=True, loops=False, combine_edges={"weight": "sum"})
 
     # page rank for node importance
-    graph.vs["pr"] = graph.pagerank(directed=True, weights="weight", damping=0.85,
+    graph.vs["pr"] = graph.pagerank(directed=True, weights="weight", damping=args.damping_factor,
                                     implementation="prpack")
 
-    # graph.vs["community"] = graph.community_leiden(weights="weight")
+    undirected = graph.as_undirected(mode='collapse', combine_edges={'weight': 'sum'})
+    # clustering = undirected.community_leiden(weights="weight")
+    clustering = undirected.community_leiden(n_iterations=args.community_iters,
+                                             resolution_parameter=args.resolution, 
+                                             objective_function='modularity')
+    graph.vs["community"] = clustering.membership
 
-    # TODO community detection for clustering
-    return graph
+    return graph, clustering
 
 
 

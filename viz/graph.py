@@ -3,11 +3,13 @@
 """
 
 import dash
+from typing import Tuple
 from dash import Input, Output, State, dcc, html
 
 from git_analysis.java_type import HierarchyType
 from graph.graph_logic import *
 from .app import app, cache
+from .graph_import import fetch_graph
 import dash_cytoscape as cyto
 
 import json
@@ -95,7 +97,8 @@ default_stylesheet = [
     {
         'selector': '.followerNode',
         'style': {
-            'background-color': '#0074D9'
+            'border-color': '#0074D9',
+            "border-width": 2,
         }
     },
     {
@@ -109,7 +112,8 @@ default_stylesheet = [
     {
         'selector': '.followingNode',
         'style': {
-            'background-color': '#FF4136'
+            'border-color': '#FF4136',
+            "border-width": 2,
         }
     },
     {
@@ -262,39 +266,41 @@ def update_cytoscape_layout(layout):
     return {'name': layout}
 
 
-@cache.memoize()
-def fetch_graph(import_dir: str, hierarchy_val: str):
-    hierarcy = HierarchyType[hierarchy_val]
-    raw = GraphData.from_folder(GRAPH_DIR / import_dir)
-    ig = raw_graph_to_igraph(raw, hierarcy)
-
-    return ig
-
-
-
-
 @app.callback(Output('cytoscape', 'elements'),
-              [Input("graph_active", "data"),
-               Input("import_dir", "value"),
-               Input("hierch", "value"),
-               Input('cytoscape', 'tapNodeData')],
-              [State('cytoscape', 'elements'),
-               State('radio-expand', 'value')])
-def generate_elements(graph_active, import_dir, hierch, nodeData, elements, expansion_mode):
+              inputs=dict(
+                  graph_active=Input("graph_active", "data"),
+                #   graph_params=dict(
+                #       import_dir=Input("import_dir", "value"),
+                #       hierch=Input("hierch", "value"),
+                #       resolution=Input("cd_resolution", "value"),
+                #       community_iters=Input("cd_iter", "value"),
+                #       damping_factor=Input("pr_damp", "value")
+                #   ),
+                  graph_params=Input("graph_params", "data"),
+                  nodeData=Input("cytoscape", "tapNodeData")
+              ),
+              state=dict(
+                  elements=State("cytoscape", "elements"),
+                  expansion_mode=State("radio-expand", "value")
+              ))
+def generate_elements(graph_active, graph_params, nodeData, elements, expansion_mode):
     if not graph_active:
         return []
-    graph = fetch_graph(import_dir, hierch)
+    import_dir = graph_params.pop("import_dir")
+    args = ConversionArgs(**graph_params)
+    graph, clustering = fetch_graph(import_dir, args)
 
     ctx = dash.callback_context
     if not ctx.triggered:
         return []
 
     reload_graph = any(
-        prop['prop_id'].split('.')[0] in ("import_dir", "hierch") for prop in ctx.triggered
+        prop['prop_id'].split('.')[0] in ("import_dir", "graph_params") for prop in ctx.triggered
     )
 
     if not nodeData or reload_graph:
-        return [igraph_vert_to_cyto(graph, graph.vs[0])]
+        print("Graph is being reloaded")
+        return [igraph_vert_to_cyto(graph, graph.vs[0], classes=["genesis"])]
 
     # If the node has already been expanded, we don't expand it again
     if nodeData.get(f'expanded-{expansion_mode}'):
@@ -309,11 +315,13 @@ def generate_elements(graph_active, import_dir, hierch, nodeData, elements, expa
     dir = "in" if expansion_mode == "followers" else "out"
     neigh_nodes = graph.neighbors(nodeData['id'], dir)
     neigh_edges = graph.incident(nodeData['id'], dir)
-    # neigh_nodes["classes"] = "followerNode" if dir == "in" else "followingNode"
-    # neigh_edges["classes"] = "followerEdge" if dir == "in" else "followingEdge"
+    node_class = "followerNode" if dir == "in" else "followingNode"
+    edge_class = "followerEdge" if dir == "in" else "followingEdge"
 
-    elements.extend(igraph_vert_to_cyto(graph, graph.vs[node_ix]) for node_ix in neigh_nodes)
-    elements.extend(igraph_edge_to_cyto(graph, graph.es[edge_ix]) for edge_ix in neigh_edges)
+
+
+    elements.extend(igraph_vert_to_cyto(graph, graph.vs[node_ix], classes=[node_class]) for node_ix in neigh_nodes)
+    elements.extend(igraph_edge_to_cyto(graph, graph.es[edge_ix], classes=[edge_class]) for edge_ix in neigh_edges)
     return elements
     
 
