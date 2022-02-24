@@ -8,8 +8,8 @@ from dash import Input, Output, State, dcc, html
 
 from git_analysis.java_type import HierarchyType
 from graph.graph_logic import *
-from .app import app, cache
-from .graph_import import fetch_graph, graph_params_to_graph
+from .app import app, cache, field
+from .graph_import import graph_params_to_state
 import dash_cytoscape as cyto
 
 import json
@@ -172,7 +172,12 @@ graph = html.Div(id="graphAndTabs", style={"display": "none"}, children=[
                     ],
                     value='all'
                 ),
-                drc.NamedDropdown(name="Focus on a new node", id="focus_dropdown", options=[])
+                field("Focus on a new node:", html.Div(id="focus", children=[
+                    dcc.Dropdown(id="package_dropdown", placeholder="Package name", options=[]),
+                    dcc.Dropdown(id="typedef_dropdown", placeholder="Type def(class/interface/enum) name", options=[]),
+                    dcc.Dropdown(id="method_dropdown", placeholder="Method name", options=[]),
+                    html.Button(id="focus_button", children="Focus")
+                ]))
             ]),
 
             dcc.Tab(label='JSON', children=[
@@ -221,24 +226,62 @@ def display_tap_edge(data):
 def update_cytoscape_layout(layout):
     return {'name': layout}
 
-@app.callback(Output("focus_dropdown", "options"),
-              Input("focus_dropdown", "search_value"),
-              Input("focus_dropdown", "value"))
-def update_focus_candidates(search_value, value):
-    if not search_value:
-        return value
+
+@app.callback(
+    dict(
+        new_options=dict(
+            package=Output("package_dropdown", "options"),
+            typedef=Output("typedef_dropdown", "options"),
+            method=Output("method_dropdown", "options")
+        ),
+        focus_disabled=Output("focus_button", "disabled")
+    ),
+    inputs=dict(
+        package=Input("package_dropdown", "value"),
+        typedef=Input("typedef_dropdown", "value"),
+        method=Input("method_dropdown", "value"),
+        graph_params=Input("graph_params", "data"),
+        old_options=dict(
+            package=State("package_dropdown", "options"),
+            typedef=State("typedef_dropdown", "options"),
+            method=State("method_dropdown", "options")
+        ),
+    )
+)
+def update_search_options(package, typedef, method, graph_params, old_options):
+    new_options = old_options or { "package": [], "typedef": [], "method": []}
+    if not graph_params:
+        return { "new_options": new_options, "focus_disabled": True }
+    state = graph_params_to_state(graph_params)
+    verts = state.vertices_by_communities_prs
+
+
+    def dfv_to_options(dfv: pd.Series):
+        return [{
+            "label": str(item),
+            "value": str(item)
+        } for item in dfv.unique()]
+
+    new_options["package"] = dfv_to_options(
+        verts["package"])
+    if package and "class" in verts.columns:
+        new_options["typedef"] = dfv_to_options(
+            verts[verts["package"] == package]["class"])
+    if typedef and "method" in verts.columns:
+        new_options["method"] = dfv_to_options(
+            verts[verts["class"] == typedef]["method"])
+    
+    can_focus = ((state.raw.hierch == HierarchyType.package and package) or
+                 (state.raw.hierch == HierarchyType.type_def and typedef) or
+                 (state.raw.hierch == HierarchyType.method and method)
+    )
+
+    return { "new_options": new_options, "focus_disabled": not can_focus }
     
 
 @app.callback(Output('cytoscape', 'elements'),
               inputs=dict(
                   graph_active=Input("graph_active", "data"),
-                #   graph_params=dict(
-                #       import_dir=Input("import_dir", "value"),
-                #       hierch=Input("hierch", "value"),
-                #       resolution=Input("cd_resolution", "value"),
-                #       community_iters=Input("cd_iter", "value"),
-                #       damping_factor=Input("pr_damp", "value")
-                #   ),
                   graph_params=Input("graph_params", "data"),
                   nodeData=Input("cytoscape", "tapNodeData")
               ),
@@ -249,7 +292,7 @@ def update_focus_candidates(search_value, value):
 def generate_elements(graph_active, graph_params, nodeData, elements, expansion_mode):
     if not graph_active:
         return []
-    graph, clustering = graph_params_to_graph(graph_params)
+    graph = graph_params_to_state(graph_params).graph
 
     ctx = dash.callback_context
     if not ctx.triggered:

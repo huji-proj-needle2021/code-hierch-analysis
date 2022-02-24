@@ -1,5 +1,5 @@
 from .app import app, field, cache
-from typing import Tuple
+from typing import NamedTuple, Tuple
 from dash import html, dcc, Input, Output, State
 import plotly.express as px
 import pandas as pd
@@ -10,15 +10,40 @@ from pathlib import Path
 import igraph
 import json
 
+class GraphState(NamedTuple):
+    """ Contains graph-related data used by the visualization """
+    raw: GraphData
+    graph: igraph.Graph
+    clustering: igraph.VertexClustering
+    # vertices dataframe, multi-indexed by communities followed by vertex IDs,
+    # and sorted by PRs
+    vertices_by_communities_prs: pd.DataFrame
 
 @cache.memoize()
-def fetch_graph(import_dir: str, args: ConversionArgs) -> Tuple[igraph.Graph, igraph.VertexClustering]:
+def fetch_graph(import_dir: str, args: ConversionArgs) -> GraphState:
+    """ Given a graph folder name and options for pre-processing it,
+        retrieves the graph, processes it and returns it with other useful graph related information.
+
+        This function will be called very often(pretty much by every operation on the graph)
+        therefore it's important for it to be cached, since we cannot store this data reliably
+        on the browser (since these types aren't JSON serializable and large to transport)
+
+    """
     print(f"Fetching graph from {import_dir} with args {args}")
     raw = GraphData.from_folder(GRAPH_DIR / import_dir)
     ig, clusters = raw_graph_to_igraph(raw, args)
-    print("Fetched graph and clustering successfully")
+    vertices_organized = ig.get_vertex_dataframe()
+    vertices_organized.reset_index(inplace=True)
+    vertices_organized.set_index(["community", "vertex ID"], inplace=True)
+    vertices_organized.sort_values(by="pr", inplace=True, ascending=False)
 
-    return ig, clusters
+    print("Fetched graph and clustering successfully")
+    return GraphState(
+        raw=raw,
+        graph=ig,
+        clustering=clusters,
+        vertices_by_communities_prs=vertices_organized
+    )
 
 
 graph_import = html.Div(children=[
@@ -62,7 +87,7 @@ def graph_params_callback(graph_params):
     return graph_params
 
 
-def graph_params_to_graph(graph_params):
+def graph_params_to_state(graph_params) -> GraphState:
     import_dir = graph_params.pop("import_dir")
     args = ConversionArgs(**graph_params)
     return fetch_graph(import_dir, args)
@@ -78,7 +103,7 @@ def graph_params_to_graph(graph_params):
 def community_graph(graph_active, graph_params):
     if not graph_active:
         return {}, { "display": "none" }
-    _graph, clustering = graph_params_to_graph(graph_params)
+    clustering = graph_params_to_state(graph_params).clustering
     fig = px.histogram(clustering.membership,
                        title="Community membership histogram")
     fig.update_layout(xaxis_title="Community number")
