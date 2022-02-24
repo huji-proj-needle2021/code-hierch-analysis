@@ -237,6 +237,7 @@ def update_cytoscape_layout(layout):
         focus_disabled=Output("focus_button", "disabled")
     ),
     inputs=dict(
+        graph_active=State("graph_active", "data"),
         package=Input("package_dropdown", "value"),
         typedef=Input("typedef_dropdown", "value"),
         method=Input("method_dropdown", "value"),
@@ -248,9 +249,9 @@ def update_cytoscape_layout(layout):
         ),
     )
 )
-def update_search_options(package, typedef, method, graph_params, old_options):
+def update_search_options(graph_active, package, typedef, method, graph_params, old_options):
     new_options = old_options or { "package": [], "typedef": [], "method": []}
-    if not graph_params:
+    if not graph_params or not graph_active:
         return { "new_options": new_options, "focus_disabled": True }
     state = graph_params_to_state(graph_params)
     verts = state.vertices_by_communities_prs
@@ -283,13 +284,17 @@ def update_search_options(package, typedef, method, graph_params, old_options):
               inputs=dict(
                   graph_active=Input("graph_active", "data"),
                   graph_params=Input("graph_params", "data"),
-                  nodeData=Input("cytoscape", "tapNodeData")
+                  nodeData=Input("cytoscape", "tapNodeData"),
+                  focus=Input("focus_button", "n_clicks"),
               ),
               state=dict(
+                  focus_values=[State("package_dropdown", "value"),
+                                State("typedef_dropdown", "value"),
+                                State("method_dropdown", "value")],
                   elements=State("cytoscape", "elements"),
                   expansion_mode=State("expansion_mode", "value")
               ))
-def generate_elements(graph_active, graph_params, nodeData, elements, expansion_mode):
+def generate_elements(graph_active, graph_params, nodeData, focus, focus_values, elements, expansion_mode):
     if not graph_active:
         return []
     graph = graph_params_to_state(graph_params).graph
@@ -298,43 +303,65 @@ def generate_elements(graph_active, graph_params, nodeData, elements, expansion_
     if not ctx.triggered:
         return []
 
-    reload_graph = any(
-        prop['prop_id'].split('.')[0] in ("import_dir", "graph_params") for prop in ctx.triggered
+    changed_inputs =set(
+        prop['prop_id'].split('.')[0] for prop in ctx.triggered
     )
+    tappedANode = any("cytoscape.tapNodeData" in prop['prop_id'] for prop in ctx.triggered)
 
-    if not nodeData or reload_graph:
+    focus_node = "focus_button" in changed_inputs
+    reload_graph = any(v in changed_inputs for v in ("import_dir", "graph_params"))
+    if focus_node:
+        name = ".".join(str(val) for val in focus_values if val)
+        found_genesis = False
+        # check if the node we're looking for already exists in the graph
+        for element in elements:
+            element["classes"] = element["classes"].replace("genesis", "")
+            if element.get("data").get("name") == name:
+                found_genesis = True
+                element["classes"] = element["classes"] + " genesis"
+                break
+        # otherwise, add it
+        if not found_genesis:
+            # TODO: sometimes this might fail to find, how is it possible?
+            elements.append(igraph_vert_to_cyto(graph, graph.vs.find(name=name), classes=["genesis"]))
+        
+        return elements
+
+    elif (not nodeData) or reload_graph:
         print("Graph is being reloaded")
         return [igraph_vert_to_cyto(graph, graph.vs[0], classes=["genesis"])]
 
-    do_expand = True
-    # If the node has already been expanded, we don't expand it again
-    if nodeData.get(f'expanded-{expansion_mode}') or nodeData.get('expanded-all'):
-        do_expand = False
+    elif tappedANode:
+        # tapped a node, try to expand
+        do_expand = True
+        # If the node has already been expanded, we don't expand it again
+        if nodeData.get(f'expanded-{expansion_mode}') or nodeData.get('expanded-all'):
+            do_expand = False
 
-    # This retrieves the currently selected element, and tag it as expanded
-    for element in elements:
-        if nodeData['id'] == element.get('data').get('id'):
-            element['data'][f'expanded-{expansion_mode}'] = True
-            break
-        
-    neigh_nodes = graph.neighbors(nodeData['id'], expansion_mode)
-    neigh_names = set(graph.vs[ix]["name"] for ix in neigh_nodes)
-    neigh_edges = graph.incident(nodeData['id'], expansion_mode)
-    node_class, edge_class = "", ""
-    if expansion_mode == "in":
-        node_class, edge_class = "followerNode", "followerEdge"
-    elif expansion_mode == "out":
-        node_class, edge_class = "followingNode", "followingEdge"
+        # This retrieves the currently selected element, and tag it as expanded
+        for element in elements:
+            if nodeData['id'] == element.get('data').get('id'):
+                element['data'][f'expanded-{expansion_mode}'] = True
+                break
+            
+        neigh_nodes = graph.neighbors(nodeData['id'], expansion_mode)
+        neigh_names = set(graph.vs[ix]["name"] for ix in neigh_nodes)
+        neigh_edges = graph.incident(nodeData['id'], expansion_mode)
+        node_class, edge_class = "", ""
+        if expansion_mode == "in":
+            node_class, edge_class = "followerNode", "followerEdge"
+        elif expansion_mode == "out":
+            node_class, edge_class = "followingNode", "followingEdge"
 
-    if do_expand:
-        elements.extend(igraph_vert_to_cyto(graph, graph.vs[node_ix], classes=[node_class, "selneighbor"]) for node_ix in neigh_nodes)
-        elements.extend(igraph_edge_to_cyto(graph, graph.es[edge_ix], classes=[edge_class, "selneighbor"]) for edge_ix in neigh_edges)
+        if do_expand:
+            elements.extend(igraph_vert_to_cyto(graph, graph.vs[node_ix], classes=[node_class, "selneighbor"]) for node_ix in neigh_nodes)
+            elements.extend(igraph_edge_to_cyto(graph, graph.es[edge_ix], classes=[edge_class, "selneighbor"]) for edge_ix in neigh_edges)
 
-    for element in elements:
-        el_id = element.get('data').get('id')
-        if el_id is None:
-            continue
-        if el_id not in neigh_names:
-            element["classes"] = element["classes"].replace("selneighbor", "")
+        for element in elements:
+            el_id = element.get('data').get('id')
+            if el_id is None:
+                continue
+            if el_id not in neigh_names:
+                element["classes"] = element["classes"].replace("selneighbor", "")
     return elements
     
