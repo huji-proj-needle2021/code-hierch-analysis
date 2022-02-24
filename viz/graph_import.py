@@ -62,6 +62,12 @@ def graph_params_callback(graph_params):
     return graph_params
 
 
+def graph_params_to_graph(graph_params):
+    import_dir = graph_params.pop("import_dir")
+    args = ConversionArgs(**graph_params)
+    return fetch_graph(import_dir, args)
+
+
 @app.callback(
     [Output("community_graph", "figure"), 
      Output("community_graph", "style")
@@ -72,9 +78,7 @@ def graph_params_callback(graph_params):
 def community_graph(graph_active, graph_params):
     if not graph_active:
         return {}, { "display": "none" }
-    import_dir = graph_params.pop("import_dir")
-    args = ConversionArgs(**graph_params)
-    _graph, clustering = fetch_graph(import_dir, args)
+    _graph, clustering = graph_params_to_graph(graph_params)
     fig = px.histogram(clustering.membership,
                        title="Community membership histogram")
     fig.update_layout(xaxis_title="Community number")

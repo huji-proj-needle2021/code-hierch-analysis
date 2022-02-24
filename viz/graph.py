@@ -9,7 +9,7 @@ from dash import Input, Output, State, dcc, html
 from git_analysis.java_type import HierarchyType
 from graph.graph_logic import *
 from .app import app, cache
-from .graph_import import fetch_graph
+from .graph_import import fetch_graph, graph_params_to_graph
 import dash_cytoscape as cyto
 
 import json
@@ -19,64 +19,6 @@ import viz.dash_reusable_components as drc
 from pathlib import Path
 
 from graph_import import *
-
-
-# ###################### DATA PREPROCESSING ######################
-# Load data
-# with open(Path(__file__).parent / 'sample_network.txt', 'r') as f:
-#     network_data = f.read().split('\n')
-
-# # We select the first 750 edges and associated nodes for an easier visualization
-# edges = network_data[:750]
-# nodes = set()
-
-# following_node_di = {}  # user id -> list of users they are following
-# following_edges_di = {}  # user id -> list of cy edges starting from user id
-
-# followers_node_di = {}  # user id -> list of followers (cy_node format)
-# followers_edges_di = {}  # user id -> list of cy edges ending at user id
-
-# cy_edges = []
-# cy_nodes = []
-
-# for edge in edges:
-#     if " " not in edge:
-#         continue
-
-#     source, target = edge.split(" ")
-
-#     cy_edge = {'data': {'id': source+target, 'source': source, 'target': target}}
-#     cy_target = {"data": {"id": target, "label": "User #" + str(target[-5:])}}
-#     cy_source = {"data": {"id": source, "label": "User #" + str(source[-5:])}}
-
-#     if source not in nodes:
-#         nodes.add(source)
-#         cy_nodes.append(cy_source)
-#     if target not in nodes:
-#         nodes.add(target)
-#         cy_nodes.append(cy_target)
-
-#     # Process dictionary of following
-#     if not following_node_di.get(source):
-#         following_node_di[source] = []
-#     if not following_edges_di.get(source):
-#         following_edges_di[source] = []
-
-#     following_node_di[source].append(cy_target)
-#     following_edges_di[source].append(cy_edge)
-
-#     # Process dictionary of followers
-#     if not followers_node_di.get(target):
-#         followers_node_di[target] = []
-#     if not followers_edges_di.get(target):
-#         followers_edges_di[target] = []
-
-#     followers_node_di[target].append(cy_source)
-#     followers_edges_di[target].append(cy_edge)
-
-# genesis_node = cy_nodes[0]
-# genesis_node['classes'] = "genesis"
-# default_elements = [genesis_node]
 
 default_stylesheet = [
     {
@@ -221,14 +163,16 @@ graph = html.Div(id="graphAndTabs", style={"display": "none"}, children=[
                     clearable=False
                 ),
                 drc.NamedRadioItems(
-                    name='Expand',
-                    id='radio-expand',
-                    options=drc.DropdownOptionsList(
-                        'followers',
-                        'following'
-                    ),
-                    value='followers'
-                )
+                    name='Graph expansion direction when clicking a node',
+                    id='expansion_mode',
+                    options=[
+                        {'label': 'Both directions', 'value': 'all'},
+                        {'label': 'Edges coming in', 'value': 'in'},
+                        {'label': 'Edges coming out', 'value': 'out'},
+                    ],
+                    value='all'
+                ),
+                drc.NamedDropdown(name="Focus on a new node", id="focus_dropdown", options=[])
             ]),
 
             dcc.Tab(label='JSON', children=[
@@ -277,6 +221,13 @@ def display_tap_edge(data):
 def update_cytoscape_layout(layout):
     return {'name': layout}
 
+@app.callback(Output("focus_dropdown", "options"),
+              Input("focus_dropdown", "search_value"),
+              Input("focus_dropdown", "value"))
+def update_focus_candidates(search_value, value):
+    if not search_value:
+        return value
+    
 
 @app.callback(Output('cytoscape', 'elements'),
               inputs=dict(
@@ -293,14 +244,12 @@ def update_cytoscape_layout(layout):
               ),
               state=dict(
                   elements=State("cytoscape", "elements"),
-                  expansion_mode=State("radio-expand", "value")
+                  expansion_mode=State("expansion_mode", "value")
               ))
 def generate_elements(graph_active, graph_params, nodeData, elements, expansion_mode):
     if not graph_active:
         return []
-    import_dir = graph_params.pop("import_dir")
-    args = ConversionArgs(**graph_params)
-    graph, clustering = fetch_graph(import_dir, args)
+    graph, clustering = graph_params_to_graph(graph_params)
 
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -316,7 +265,7 @@ def generate_elements(graph_active, graph_params, nodeData, elements, expansion_
 
     do_expand = True
     # If the node has already been expanded, we don't expand it again
-    if nodeData.get(f'expanded-{expansion_mode}'):
+    if nodeData.get(f'expanded-{expansion_mode}') or nodeData.get('expanded-all'):
         do_expand = False
 
     # This retrieves the currently selected element, and tag it as expanded
@@ -325,12 +274,14 @@ def generate_elements(graph_active, graph_params, nodeData, elements, expansion_
             element['data'][f'expanded-{expansion_mode}'] = True
             break
         
-    dir = "in" if expansion_mode == "followers" else "out"
-    neigh_nodes = graph.neighbors(nodeData['id'], dir)
+    neigh_nodes = graph.neighbors(nodeData['id'], expansion_mode)
     neigh_names = set(graph.vs[ix]["name"] for ix in neigh_nodes)
-    neigh_edges = graph.incident(nodeData['id'], dir)
-    node_class = "followerNode" if dir == "in" else "followingNode"
-    edge_class = "followerEdge" if dir == "in" else "followingEdge"
+    neigh_edges = graph.incident(nodeData['id'], expansion_mode)
+    node_class, edge_class = "", ""
+    if expansion_mode == "in":
+        node_class, edge_class = "followerNode", "followerEdge"
+    elif expansion_mode == "out":
+        node_class, edge_class = "followingNode", "followingEdge"
 
     if do_expand:
         elements.extend(igraph_vert_to_cyto(graph, graph.vs[node_ix], classes=[node_class, "selneighbor"]) for node_ix in neigh_nodes)
