@@ -17,6 +17,32 @@ class ConversionArgs(NamedTuple):
     resolution: float = 1.0
     community_iters: int = 50
 
+
+# https://stackoverflow.com/questions/470690/how-to-automatically-generate-n-distinct-colors
+GRAPH_COLORS = [
+    "#FFB300", # Vivid Yellow
+    "#803E75", # Strong Purple
+    "#FF6800", # Vivid Orange
+    "#A6BDD7", # Very Light Blue
+    "#C10020", # Vivid Red
+    "#CEA262", # Grayish Yellow
+    "#817066", # Medium Gray
+    # The following don't work well for people with defective color vision
+    "#007D34", # Vivid Green
+    "#F6768E", # Strong Purplish Pink
+    "#00538A", # Strong Blue
+    "#FF7A5C", # Strong Yellowish Pink
+    "#53377A", # Strong Violet
+    "#FF8E00", # Vivid Orange Yellow
+    "#B32851", # Strong Purplish Red
+    "#F4C800", # Vivid Greenish Yellow
+    "#7F180D", # Strong Reddish Brown
+    "#93AA00", # Vivid Yellowish Green
+    "#593315", # Deep Yellowish Brown
+    "#F13A13", # Vivid Reddish Orange
+    "#232C16", # Dark Olive Green
+]
+
 def raw_graph_to_igraph(raw: GraphData, args: ConversionArgs) -> Tuple[igraph.Graph, igraph.VertexClustering]:
     """ Converts a graph (whether a call graph or a graph from association rules)
         into igraph representation, optionally constricting the graph's hierarchy(combining nodes and edges
@@ -85,6 +111,7 @@ def raw_graph_to_igraph(raw: GraphData, args: ConversionArgs) -> Tuple[igraph.Gr
                                              resolution_parameter=args.resolution, 
                                              objective_function='modularity')
     graph.vs["community"] = clustering.membership
+    graph.vs["color"] = [GRAPH_COLORS[c % len(GRAPH_COLORS)] for c in clustering.membership]
 
     return graph, clustering
 

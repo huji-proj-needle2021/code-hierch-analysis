@@ -83,7 +83,9 @@ default_stylesheet = [
         "selector": 'node',
         'style': {
             "opacity": 0.65,
-            'z-index': 9999
+            'z-index': 9999,
+            'background-color': 'data(color)',
+            'color': 'data(color)'
         }
     },
     {
@@ -151,6 +153,16 @@ default_stylesheet = [
             "color": "black",
             "font-size": 12,
             'z-index': 9999
+        }
+    },
+    {
+        'selector': '.selneighbor',
+        "style": {
+            "label": "data(label)",
+            "color": "black",
+            "font-size": 12,
+            'z-index': 9999
+
         }
     }
 ]
@@ -302,9 +314,10 @@ def generate_elements(graph_active, graph_params, nodeData, elements, expansion_
         print("Graph is being reloaded")
         return [igraph_vert_to_cyto(graph, graph.vs[0], classes=["genesis"])]
 
+    do_expand = True
     # If the node has already been expanded, we don't expand it again
     if nodeData.get(f'expanded-{expansion_mode}'):
-        return elements
+        do_expand = False
 
     # This retrieves the currently selected element, and tag it as expanded
     for element in elements:
@@ -314,46 +327,20 @@ def generate_elements(graph_active, graph_params, nodeData, elements, expansion_
         
     dir = "in" if expansion_mode == "followers" else "out"
     neigh_nodes = graph.neighbors(nodeData['id'], dir)
+    neigh_names = set(graph.vs[ix]["name"] for ix in neigh_nodes)
     neigh_edges = graph.incident(nodeData['id'], dir)
     node_class = "followerNode" if dir == "in" else "followingNode"
     edge_class = "followerEdge" if dir == "in" else "followingEdge"
 
+    if do_expand:
+        elements.extend(igraph_vert_to_cyto(graph, graph.vs[node_ix], classes=[node_class, "selneighbor"]) for node_ix in neigh_nodes)
+        elements.extend(igraph_edge_to_cyto(graph, graph.es[edge_ix], classes=[edge_class, "selneighbor"]) for edge_ix in neigh_edges)
 
-
-    elements.extend(igraph_vert_to_cyto(graph, graph.vs[node_ix], classes=[node_class]) for node_ix in neigh_nodes)
-    elements.extend(igraph_edge_to_cyto(graph, graph.es[edge_ix], classes=[edge_class]) for edge_ix in neigh_edges)
+    for element in elements:
+        el_id = element.get('data').get('id')
+        if el_id is None:
+            continue
+        if el_id not in neigh_names:
+            element["classes"] = element["classes"].replace("selneighbor", "")
     return elements
     
-
-    # if expansion_mode == 'followers':
-        
-    #     followers_nodes = followers_node_di.get(nodeData['id'])
-    #     followers_edges = followers_edges_di.get(nodeData['id'])
-
-    #     if followers_nodes:
-    #         for node in followers_nodes:
-    #             node['classes'] = 'followerNode'
-    #         elements.extend(followers_nodes)
-
-    #     if followers_edges:
-    #         for follower_edge in followers_edges:
-    #             follower_edge['classes'] = 'followerEdge'
-    #         elements.extend(followers_edges)
-
-    # elif expansion_mode == 'following':
-
-    #     following_nodes = following_node_di.get(nodeData['id'])
-    #     following_edges = following_edges_di.get(nodeData['id'])
-
-    #     if following_nodes:
-    #         for node in following_nodes:
-    #             if node['data']['id'] != genesis_node['data']['id']:
-    #                 node['classes'] = 'followingNode'
-    #                 elements.append(node)
-
-    #     if following_edges:
-    #         for follower_edge in following_edges:
-    #             follower_edge['classes'] = 'followingEdge'
-    #         elements.extend(following_edges)
-
-    # return elements
