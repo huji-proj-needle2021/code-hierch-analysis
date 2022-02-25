@@ -66,12 +66,14 @@ class Args:
         return cg
 
 GEN_CALLGRAPH_JAR = Path(__file__).resolve().parent / "genCallgraph.jar"
-JAR_FOLDER = Path(__file__).resolve().parent.parent / "genCallgraph" / "toAnalyze"
-OUTPUT_FOLDER = GRAPH_DIR / "jadx"
 
-def run(refresh=False):
+if __name__ == "__main__":
+    from graph.graph_logic import raw_graph_to_igraph
     logging.basicConfig()
     log.setLevel(logging.DEBUG)
+
+    JAR_FOLDER = Path(__file__).resolve().parent.parent / "genCallgraph" / "toAnalyze"
+    OUTPUT_FOLDER = GRAPH_DIR / "jadx"
     args = Args(
         edge_filter=["jadx"],
         jar_filter=["jadx"],
@@ -79,11 +81,5 @@ def run(refresh=False):
         graph_output_folder=OUTPUT_FOLDER,
         main_class_identifier="jadx.gui.JadxGUI",
     )
-    cg = args.run_callgraph(GEN_CALLGRAPH_JAR, force_regen=refresh)
-    return cg
-
-
-if __name__ == "__main__":
-    from graph.graph_logic import raw_graph_to_igraph
-    cg = run()
+    cg = args.run_callgraph(GEN_CALLGRAPH_JAR, force_regen=False)
     ig = raw_graph_to_igraph(cg, ConversionArgs(hierch=HierarchyType.method))

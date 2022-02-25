@@ -1,11 +1,11 @@
-""" A very basic interface for generating a Java callgraph using
-    a web UI instead of CLI
+""" Defines the UI for creating a call-graph by uploading .jars,
+    essentially a wrapper over 'genCallgraph'
 """
 
 from dash import html, dcc, Input, Output, State
 from dash.development.base_component import Component
 from dash.exceptions import PreventUpdate
-from graph_import import Args, GEN_CALLGRAPH_JAR, GRAPH_DIR
+from gen_callgraph_wrapper import Args, GEN_CALLGRAPH_JAR, GRAPH_DIR
 from pathlib import Path
 from .app import app, field
 import tempfile

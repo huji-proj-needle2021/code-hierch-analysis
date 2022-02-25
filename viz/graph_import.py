@@ -1,10 +1,12 @@
+""" Defines UI for importing a graph into the visualization tool """
 from .app import app, field, cache
 from typing import NamedTuple, Tuple
 from dash import html, dcc, Input, Output, State
 import plotly.express as px
 import pandas as pd
 from git_analysis import HierarchyType
-from graph_import import GRAPH_DIR, ConversionArgs
+from gen_callgraph_wrapper import GRAPH_DIR
+from graph.graph_logic import ConversionArgs
 from graph import raw_graph_to_igraph, GraphData
 from pathlib import Path
 import igraph
@@ -15,8 +17,7 @@ class GraphState(NamedTuple):
     raw: GraphData
     graph: igraph.Graph
     clustering: igraph.VertexClustering
-    # vertices dataframe, multi-indexed by communities followed by vertex IDs,
-    # and sorted by PRs
+    # vertices dataframe, indexed by communities, sorted by PR
     vertices_by_communities_prs: pd.DataFrame
 
 @cache.memoize()
@@ -37,7 +38,6 @@ def fetch_graph(import_dir: str, args: ConversionArgs) -> GraphState:
     vertices_organized.set_index(["community", "vertex ID"], inplace=True)
     vertices_organized.sort_values(by="pr", inplace=True, ascending=False)
 
-    print("Fetched graph and clustering successfully")
     return GraphState(
         raw=raw,
         graph=ig,

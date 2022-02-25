@@ -18,8 +18,6 @@ import dash_cytoscape as cyto
 import viz.dash_reusable_components as drc
 from pathlib import Path
 
-from graph_import import *
-
 default_stylesheet = [
     {
         "selector": 'node',
@@ -331,7 +329,6 @@ def add_nodes(state: GraphState, elements, num_nodes_to_add, add_edges_opt):
     new_nodes = state.graph.vs.select(name_in=new_node_names)
 
     new_elements = elements + [igraph_vert_to_cyto(state.graph, node, []) for node in new_nodes ]
-    new_edges = []
     if add_edges_opt:
         subgraph = state.graph.induced_subgraph(new_nodes)
         new_edges = get_filtered_edges(elements, subgraph.es)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 cyto.load_extra_layouts()
 app = Dash(__name__)
+app.title = "Needle in a Data Haystack - Graph Visualization"
 
 CACHE_CONFIG = {
     'CACHE_TYPE': 'SimpleCache'
