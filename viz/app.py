@@ -8,8 +8,7 @@ cyto.load_extra_layouts()
 app = Dash(__name__)
 
 CACHE_CONFIG = {
-    'CACHE_TYPE': 'FileSystemCache',
-    'CACHE_DIR': str(Path(__file__).resolve().parent.parent / "CACHE")
+    'CACHE_TYPE': 'SimpleCache'
 }
 cache = Cache()
 cache.init_app(app.server, config=CACHE_CONFIG)
