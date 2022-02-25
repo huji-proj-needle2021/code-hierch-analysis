@@ -1,15 +1,15 @@
 """ Based on https://raw.githubusercontent.com/plotly/dash-cytoscape/master/usage-elements.py
-    modified to use our own graph
+    Defines the graph visualization itself, and a side control panel.
 """
 
 import dash
-from typing import Tuple
+from typing import Iterable, Tuple
 from dash import Input, Output, State, dcc, html
 
 from git_analysis.java_type import HierarchyType
 from graph.graph_logic import *
 from .app import app, cache, field
-from .graph_import import graph_params_to_state
+from .graph_import import graph_params_to_state, GraphState
 import dash_cytoscape as cyto
 
 import json
@@ -34,6 +34,7 @@ default_stylesheet = [
         "selector": 'edge',
         'style': {
             "curve-style": "bezier",
+            "target-arrow-shape": "vee",
             "opacity": 0.45,
             'z-index': 5000
         }
@@ -124,7 +125,8 @@ styles = {
         'width': '100%'
     },
     'graphView': {
-        'flex': '8'
+        'flex': '8',
+        'border': '1px solid black'
     },
     'tabView': {
         'flex': '4'
@@ -133,7 +135,7 @@ styles = {
 
 
 
-graph = html.Div(id="graphAndTabs", style={"display": "none"}, children=[
+graph =  html.Div(id="graphAndTabs", style={"display": "none"}, children=[
     html.Div(style=styles["graphView"], children=[
         cyto.Cytoscape(
             id='cytoscape',
@@ -145,7 +147,7 @@ graph = html.Div(id="graphAndTabs", style={"display": "none"}, children=[
         )
     ]),
 
-    html.Div(style=styles["tabView"], children=[
+    html.Div(id="tabView", style=styles["tabView"], children=[
         dcc.Tabs(id='tabs', children=[
             dcc.Tab(label='Control Panel', children=[
                 drc.NamedDropdown(
@@ -177,7 +179,14 @@ graph = html.Div(id="graphAndTabs", style={"display": "none"}, children=[
                     dcc.Dropdown(id="typedef_dropdown", placeholder="Type def(class/interface/enum) name", options=[]),
                     dcc.Dropdown(id="method_dropdown", placeholder="Method name", options=[]),
                     html.Button(id="focus_button", children="Focus")
-                ]))
+                ])),
+                html.P("Adding many nodes to the graph. The nodes are given from alternating communities, " +
+                       "and sorted by page-ranks within each community."),
+                field("Maximal number of nodes to add",
+                      dcc.Slider(id="num_nodes_add", min=0, max=1000)),
+                dcc.Checklist(id="add_edges", options=[
+                              "Add edges spanned by these nodes too(can be heavy)"], value=[]),
+                html.Button(id="add_button", children="Add"),
             ]),
 
             dcc.Tab(label='JSON', children=[
@@ -250,6 +259,7 @@ def update_cytoscape_layout(layout):
     )
 )
 def update_search_options(graph_active, package, typedef, method, graph_params, old_options):
+    """ Callback for updating dropdowns for searching a class/method/interface """
     new_options = old_options or { "package": [], "typedef": [], "method": []}
     if not graph_params or not graph_active:
         return { "new_options": new_options, "focus_disabled": True }
@@ -278,7 +288,71 @@ def update_search_options(graph_active, package, typedef, method, graph_params, 
     )
 
     return { "new_options": new_options, "focus_disabled": not can_focus }
-    
+
+def add_nodes(state: GraphState, elements, num_nodes_to_add, add_edges_opt):
+    """ Adds nodes(and possibly their edges) to the graph.
+        The number of nodes being added is divided evenly among all communities,
+        and within each community, added in descending order of page-rank values.
+        This should ensure that the nodes added to the visualization are more
+        representative, without biasing towards a particular dominant community.
+    """
+    if not num_nodes_to_add:
+        return elements
+
+    # first, determine candidate nodes -
+    # those not already present in the graph
+    existing_node_names = set(
+        el.get("data").get("name") for el in elements
+    )
+
+    df = state.vertices_by_communities_prs
+    df = df[~(df["name"].isin(existing_node_names))]
+
+
+    if len(df) == 0:
+        return elements
+
+    # split the number of nodes added within each community,
+    # evenly.
+    communities = df.index.get_level_values(0).unique()
+    n_communities = len(communities)
+    take_per_comm = num_nodes_to_add // n_communities
+    take_remainder = num_nodes_to_add % n_communities
+
+    node_names = set()
+    for ix, comm_ix in enumerate(communities):
+        to_take = take_per_comm 
+        if ix == 0:
+            to_take += take_remainder
+        node_names.update(df.loc[comm_ix].iloc[:to_take]["name"])
+
+
+    new_node_names = node_names - existing_node_names
+    new_nodes = state.graph.vs.select(name_in=new_node_names)
+
+    new_elements = elements + [igraph_vert_to_cyto(state.graph, node, []) for node in new_nodes ]
+    new_edges = []
+    if add_edges_opt:
+        subgraph = state.graph.induced_subgraph(new_nodes)
+        new_edges = get_filtered_edges(elements, subgraph.es)
+        new_elements.extend(igraph_edge_to_cyto(subgraph, edge, []) for edge in new_edges)
+
+    return new_elements
+
+def get_filtered_edges(elements, new_edges: Iterable[igraph.Edge]) -> Iterable[igraph.Edge]:
+    """" Given the current cytoscape elements, and a set of edges
+         to be added, filters them to avoid duplicate edges.
+    """
+    existing_edges = set(
+        (el["data"]["source"], el["data"]["target"])
+        for el in elements
+        if el["data"].get("source") 
+    )
+    for edge in new_edges:
+        from_name = edge.source_vertex["name"]
+        to_name = edge.target_vertex["name"]
+        if (from_name, to_name) not in existing_edges:
+            yield edge
 
 @app.callback(Output('cytoscape', 'elements'),
               inputs=dict(
@@ -286,18 +360,27 @@ def update_search_options(graph_active, package, typedef, method, graph_params, 
                   graph_params=Input("graph_params", "data"),
                   nodeData=Input("cytoscape", "tapNodeData"),
                   focus=Input("focus_button", "n_clicks"),
+                  add_edge=Input("add_button", "n_clicks")
               ),
               state=dict(
                   focus_values=[State("package_dropdown", "value"),
                                 State("typedef_dropdown", "value"),
                                 State("method_dropdown", "value")],
                   elements=State("cytoscape", "elements"),
-                  expansion_mode=State("expansion_mode", "value")
+                  expansion_mode=State("expansion_mode", "value"),
+                  num_nodes_to_add=State("num_nodes_add", "value"),
+                  add_edges_opt=State("add_edges", "value"),
               ))
-def generate_elements(graph_active, graph_params, nodeData, focus, focus_values, elements, expansion_mode):
+def generate_elements(graph_active, graph_params, nodeData, focus, add_edge, focus_values, elements, expansion_mode,
+                      num_nodes_to_add, add_edges_opt):
+    """ This callback is responsible for generating the graph's elements, therefore
+        it needs to respond to every input that can affect the graph - hence
+        the huge amount of inputs.
+    """
     if not graph_active:
         return []
-    graph = graph_params_to_state(graph_params).graph
+    state = graph_params_to_state(graph_params)
+    graph = state.graph
 
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -309,6 +392,7 @@ def generate_elements(graph_active, graph_params, nodeData, focus, focus_values,
     tappedANode = any("cytoscape.tapNodeData" in prop['prop_id'] for prop in ctx.triggered)
 
     focus_node = "focus_button" in changed_inputs
+    add_edge = "add_button" in changed_inputs
     reload_graph = any(v in changed_inputs for v in ("import_dir", "graph_params"))
     if focus_node:
         name = ".".join(str(val) for val in focus_values if val)
@@ -326,7 +410,8 @@ def generate_elements(graph_active, graph_params, nodeData, focus, focus_values,
             elements.append(igraph_vert_to_cyto(graph, graph.vs.find(name=name), classes=["genesis"]))
         
         return elements
-
+    elif add_edge:
+        return add_nodes(state, elements, num_nodes_to_add, add_edges_opt)
     elif (not nodeData) or reload_graph:
         print("Graph is being reloaded")
         return [igraph_vert_to_cyto(graph, graph.vs[0], classes=["genesis"])]
@@ -346,7 +431,8 @@ def generate_elements(graph_active, graph_params, nodeData, focus, focus_values,
             
         neigh_nodes = graph.neighbors(nodeData['id'], expansion_mode)
         neigh_names = set(graph.vs[ix]["name"] for ix in neigh_nodes)
-        neigh_edges = graph.incident(nodeData['id'], expansion_mode)
+        neigh_edges = get_filtered_edges(elements, (graph.es[ix]
+                                         for ix in graph.incident(nodeData['id'], expansion_mode)))
         node_class, edge_class = "", ""
         if expansion_mode == "in":
             node_class, edge_class = "followerNode", "followerEdge"
@@ -355,7 +441,8 @@ def generate_elements(graph_active, graph_params, nodeData, focus, focus_values,
 
         if do_expand:
             elements.extend(igraph_vert_to_cyto(graph, graph.vs[node_ix], classes=[node_class, "selneighbor"]) for node_ix in neigh_nodes)
-            elements.extend(igraph_edge_to_cyto(graph, graph.es[edge_ix], classes=[edge_class, "selneighbor"]) for edge_ix in neigh_edges)
+            elements.extend(igraph_edge_to_cyto(graph, edge, classes=[edge_class, "selneighbor"])
+                            for edge in neigh_edges)
 
         for element in elements:
             el_id = element.get('data').get('id')
