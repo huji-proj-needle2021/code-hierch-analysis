@@ -122,6 +122,7 @@ def community_graph(graph_active, graph_params):
 )
 def graph_import_dir(import_dir):
     graph_active = False
+    GRAPH_DIR.mkdir(exist_ok=True, parents=True)
     options = [f.parts[-1] for f in GRAPH_DIR.iterdir() if f.is_dir()]
     possible_hierch = []
     hierch_disabled = True

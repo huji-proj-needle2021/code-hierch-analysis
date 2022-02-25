@@ -1,8 +1,6 @@
-from viz.app import app
-from viz.layout import layout
+from viz import app
 import logging
 
-app.layout = layout
 
 if __name__ == '__main__':
     logging.basicConfig()

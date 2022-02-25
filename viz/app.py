@@ -19,3 +19,5 @@ def field(label: str, input: Component):
         html.Label(children=label, htmlFor=input.id),
         input
     ], className="formField")
+
+server = app.server
