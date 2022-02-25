@@ -16,7 +16,6 @@ import json
 
 import dash_cytoscape as cyto
 import viz.dash_reusable_components as drc
-from pathlib import Path
 
 default_stylesheet = [
     {
@@ -303,7 +302,9 @@ def update_search_options(graph_active, package, typedef, method, graph_params, 
 
     return { "new_options": new_options, "focus_disabled": not can_focus }
 
-def add_nodes(state: GraphState, elements, num_nodes_to_add, add_edges_opt):
+
+
+def handle_add_nodes(state: GraphState, elements, num_nodes_to_add, add_edges_opt):
     """ Adds nodes(and possibly their edges) to the graph.
         The number of nodes being added is divided evenly among all communities,
         and within each community, added in descending order of page-rank values.
@@ -352,20 +353,66 @@ def add_nodes(state: GraphState, elements, num_nodes_to_add, add_edges_opt):
 
     return new_elements
 
-def get_filtered_edges(elements, new_edges: Iterable[igraph.Edge]) -> Iterable[igraph.Edge]:
-    """" Given the current cytoscape elements, and a set of edges
-         to be added, filters them to avoid duplicate edges.
-    """
-    existing_edges = set(
-        (el["data"]["source"], el["data"]["target"])
-        for el in elements
-        if el["data"].get("source") 
-    )
-    for edge in new_edges:
-        from_name = edge.source_vertex["name"]
-        to_name = edge.target_vertex["name"]
-        if (from_name, to_name) not in existing_edges:
-            yield edge
+
+def handle_focus_node(state: GraphState, elements, focus_values):
+    """ Focuses on a node, given an array of values for package, class and method
+        dropdown inputs. """
+    name = ".".join(str(val) for val in focus_values if val)
+    found_genesis = False
+    graph = state.graph
+    # check if the node we're looking for already exists in the graph
+    for element in elements:
+        element["classes"] = element["classes"].replace("genesis", "")
+        if element.get("data").get("name") == name:
+            found_genesis = True
+            element["classes"] = element["classes"] + " genesis"
+            break
+    # otherwise, add it
+    if not found_genesis:
+        # TODO: sometimes this might fail to find, how is it possible?
+        elements.append(igraph_vert_to_cyto(graph, graph.vs.find(name=name), classes=["genesis"]))
+    
+    return elements
+
+def handle_tap_node(state: GraphState, elements, nodeData, expansion_mode):
+    """ """
+    graph = state.graph
+    # tapped a node, try to expand
+    if expansion_mode == "dont":
+        return elements
+    do_expand = True
+    # If the node has already been expanded, we don't expand it again
+    if nodeData.get(f'expanded-{expansion_mode}') or nodeData.get('expanded-all'):
+        do_expand = False
+
+    # This retrieves the currently selected element, and tag it as expanded
+    for element in elements:
+        if nodeData['id'] == element.get('data').get('id'):
+            element['data'][f'expanded-{expansion_mode}'] = True
+            break
+        
+    neigh_nodes = graph.neighbors(nodeData['id'], expansion_mode)
+    neigh_names = set(graph.vs[ix]["name"] for ix in neigh_nodes)
+    neigh_edges = get_filtered_edges(elements, (graph.es[ix]
+                                        for ix in graph.incident(nodeData['id'], expansion_mode)))
+    node_class, edge_class = "", ""
+    if expansion_mode == "in":
+        node_class, edge_class = "followerNode", "followerEdge"
+    elif expansion_mode == "out":
+        node_class, edge_class = "followingNode", "followingEdge"
+
+    if do_expand:
+        elements.extend(igraph_vert_to_cyto(graph, graph.vs[node_ix], classes=[node_class, "selneighbor"]) for node_ix in neigh_nodes)
+        elements.extend(igraph_edge_to_cyto(graph, edge, classes=[edge_class, "selneighbor"])
+                        for edge in neigh_edges)
+
+    for element in elements:
+        el_id = element.get('data').get('id')
+        if el_id is None:
+            continue
+        if el_id not in neigh_names:
+            element["classes"] = element["classes"].replace("selneighbor", "")
+    return elements
 
 @app.callback(Output('cytoscape', 'elements'),
               inputs=dict(
@@ -408,62 +455,15 @@ def generate_elements(graph_active, graph_params, nodeData, focus, add_edge, foc
     add_edge = "add_button" in changed_inputs
     reload_graph = any(v in changed_inputs for v in ("import_dir", "graph_params"))
     if focus_node:
-        name = ".".join(str(val) for val in focus_values if val)
-        found_genesis = False
-        # check if the node we're looking for already exists in the graph
-        for element in elements:
-            element["classes"] = element["classes"].replace("genesis", "")
-            if element.get("data").get("name") == name:
-                found_genesis = True
-                element["classes"] = element["classes"] + " genesis"
-                break
-        # otherwise, add it
-        if not found_genesis:
-            # TODO: sometimes this might fail to find, how is it possible?
-            elements.append(igraph_vert_to_cyto(graph, graph.vs.find(name=name), classes=["genesis"]))
-        
-        return elements
+        return handle_focus_node(state, elements, focus_values)
     elif add_edge:
-        return add_nodes(state, elements, num_nodes_to_add, add_edges_opt)
+        return handle_add_nodes(state, elements, num_nodes_to_add, add_edges_opt)
     elif (not nodeData) or reload_graph:
         print("Graph is being reloaded")
         return [igraph_vert_to_cyto(graph, graph.vs[0], classes=["genesis"])]
 
     elif tappedANode:
-        # tapped a node, try to expand
-        if expansion_mode == "dont":
-            return elements
-        do_expand = True
-        # If the node has already been expanded, we don't expand it again
-        if nodeData.get(f'expanded-{expansion_mode}') or nodeData.get('expanded-all'):
-            do_expand = False
-
-        # This retrieves the currently selected element, and tag it as expanded
-        for element in elements:
-            if nodeData['id'] == element.get('data').get('id'):
-                element['data'][f'expanded-{expansion_mode}'] = True
-                break
-            
-        neigh_nodes = graph.neighbors(nodeData['id'], expansion_mode)
-        neigh_names = set(graph.vs[ix]["name"] for ix in neigh_nodes)
-        neigh_edges = get_filtered_edges(elements, (graph.es[ix]
-                                         for ix in graph.incident(nodeData['id'], expansion_mode)))
-        node_class, edge_class = "", ""
-        if expansion_mode == "in":
-            node_class, edge_class = "followerNode", "followerEdge"
-        elif expansion_mode == "out":
-            node_class, edge_class = "followingNode", "followingEdge"
-
-        if do_expand:
-            elements.extend(igraph_vert_to_cyto(graph, graph.vs[node_ix], classes=[node_class, "selneighbor"]) for node_ix in neigh_nodes)
-            elements.extend(igraph_edge_to_cyto(graph, edge, classes=[edge_class, "selneighbor"])
-                            for edge in neigh_edges)
-
-        for element in elements:
-            el_id = element.get('data').get('id')
-            if el_id is None:
-                continue
-            if el_id not in neigh_names:
-                element["classes"] = element["classes"].replace("selneighbor", "")
-    return elements
+        return handle_tap_node(state, elements, nodeData, expansion_mode)
+    else:
+        return elements
     

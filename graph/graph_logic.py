@@ -1,9 +1,9 @@
-""" This module defines some graph functions that are used
-    for exploring and visualizing a graph in the visualization
+""" This module defines some functions for converting graph representations,
+    from raw 'GraphData', to a pre-processed igraph representation,
+    and utility methods for converting igraph objects to cytoscape.
 """
 
-from typing import List, NamedTuple, Optional, Tuple, Union
-from typing_extensions import TypedDict
+from typing import List, NamedTuple, Optional, Tuple, Union, Iterable
 import igraph
 # from .app import cache
 from .graph_data import GraphData
@@ -94,12 +94,7 @@ def raw_graph_to_igraph(raw: GraphData, args: ConversionArgs) -> Tuple[igraph.Gr
         else:
             graph.vs["name"] = graph.vs["package"]
 
-        # at this point, the contracted graph(class/package) is likely
-        # to include self-loops. These loops might be indicative of node importance,
-        # e.g, a lot of activity or some kind of god class/package (in the callgraph model),
-        # or something that changes very often(git diff model) so we may want to keep them.
-        # We do combine parallel edges though, they just clutter the graph
-        graph.simplify(multiple=True, loops=False, combine_edges={"weight": "sum"})
+        graph.simplify(multiple=True, loops=True, combine_edges={"weight": "sum"})
 
     # page rank for node importance
     graph.vs["pr"] = graph.pagerank(directed=True, weights="weight", damping=args.damping_factor,
@@ -149,25 +144,17 @@ def igraph_to_cyto(graph: igraph.Graph):
     ]
 
 
-def get_subgraph_by_pr_cyto(graph: igraph.Graph, max_nodes: int,
-                            max_edges: int,
-                            ascending_pr: bool = False,
-                            ascending_weight: bool = False):
-    """ Returns up to 'max_nodes' nodes and 'max_edges' edges,
-        nodes sorted by page rank and edges by weight(both descending by default)
-        The nodes and edges are returned in cytoscape format
+def get_filtered_edges(elements, new_edges: Iterable[igraph.Edge]) -> Iterable[igraph.Edge]:
+    """" Given the current cytoscape elements, and a set of edges
+         to be added, filters them to avoid duplicate edges.
     """
-
-    # first, pick up to 'max_nodes' with the highest importance
-    vdf = graph.get_vertex_dataframe()
-    vdf.sort_values(by="pr", ascending=ascending_pr, inplace=True)
-    chosen_ix = vdf[:max_nodes].index
-    subgraph = graph.induced_subgraph(chosen_ix)
-
-    # now, pick up to 'max_edges' edges with highest weights.
-    # nodes with no edges will be removed
-    edf = subgraph.get_edge_dataframe()
-    edf.sort_values(by="weight", ascending=ascending_weight, inplace=True)
-    subgraph = subgraph.subgraph_edges(edf[:max_edges].index, delete_vertices=True)
-
-    return igraph_to_cyto(subgraph)
+    existing_edges = set(
+        (el["data"]["source"], el["data"]["target"])
+        for el in elements
+        if el["data"].get("source") 
+    )
+    for edge in new_edges:
+        from_name = edge.source_vertex["name"]
+        to_name = edge.target_vertex["name"]
+        if (from_name, to_name) not in existing_edges:
+            yield edge
