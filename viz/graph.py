@@ -95,16 +95,6 @@ default_stylesheet = [
             "font-size": 12,
             'z-index': 9999
         }
-    },
-    {
-        'selector': '.selneighbor',
-        "style": {
-            "label": "data(label)",
-            "color": "black",
-            "font-size": 12,
-            'z-index': 9999
-
-        }
     }
 ]
 
@@ -132,6 +122,19 @@ styles = {
 }
 
 
+LAYOUTS = {
+    'random': "random",
+    'grid': "grid",
+    'circle': "circle",
+    'concentric': "concentric",
+    'breadthfirst': "breadth-first: good for exploring by clicking around the graph.",
+    'cose': "cose - force directed graph(good for visualizing communities)",
+    'cola': "cola",
+    'euler': "euler",
+    'spread': "spread",
+    'dagre': "dagre",
+    'klay': "klay"
+}
 
 graph =  html.Div(id="graphAndTabs", style={"display": "none"}, children=[
     html.Div(style=styles["graphView"], children=[
@@ -151,14 +154,7 @@ graph =  html.Div(id="graphAndTabs", style={"display": "none"}, children=[
                 drc.NamedDropdown(
                     name='Layout',
                     id='dropdown-layout',
-                    options=drc.DropdownOptionsList(
-                        'random',
-                        'grid',
-                        'circle',
-                        'concentric',
-                        'breadthfirst',
-                        'cose'
-                    ),
+                    options=LAYOUTS,
                     value='grid',
                     clearable=False
                 ),
@@ -169,6 +165,7 @@ graph =  html.Div(id="graphAndTabs", style={"display": "none"}, children=[
                         {'label': 'Both directions', 'value': 'all'},
                         {'label': 'Edges coming in', 'value': 'in'},
                         {'label': 'Edges coming out', 'value': 'out'},
+                        {'label': "Don't expand", 'value': 'dont'},
                     ],
                     value='all'
                 ),
@@ -185,6 +182,9 @@ graph =  html.Div(id="graphAndTabs", style={"display": "none"}, children=[
                 dcc.Checklist(id="add_edges", options=[
                               "Add edges spanned by these nodes too(can be heavy)"], value=[]),
                 html.Button(id="add_button", children="Add"),
+
+                dcc.Checklist(id="show_neigh_labels", options=[
+                              "Show labels for neighbor nodes"], value=["Show labels for neighbor nodes"]),
             ]),
 
             dcc.Tab(label='JSON', children=[
@@ -216,6 +216,22 @@ def render_graph(graph_active):
     return { "display": "none"}
 
 # ############################## CALLBACKS ####################################
+
+@app.callback(Output("cytoscape", "stylesheet"), Input("show_neigh_labels", "value"))
+def graph_stylesheet(show_neigh_labels):
+    if len(show_neigh_labels) > 0:
+        return default_stylesheet + [{
+            'selector': '.selneighbor',
+            "style": {
+                "label": "data(label)",
+                "color": "black",
+                "font-size": 8,
+                'z-index': 9999
+
+            }
+        }]
+    return default_stylesheet
+
 @app.callback(Output('tap-node-json-output', 'children'),
               [Input('cytoscape', 'tapNode')])
 def display_tap_node(data):
@@ -415,6 +431,8 @@ def generate_elements(graph_active, graph_params, nodeData, focus, add_edge, foc
 
     elif tappedANode:
         # tapped a node, try to expand
+        if expansion_mode == "dont":
+            return elements
         do_expand = True
         # If the node has already been expanded, we don't expand it again
         if nodeData.get(f'expanded-{expansion_mode}') or nodeData.get('expanded-all'):
