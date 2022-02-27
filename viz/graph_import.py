@@ -1,4 +1,5 @@
-""" Defines UI for importing a graph into the visualization tool """
+""" Defines UI for importing a graph into the visualization tool, as well as
+    two plots that give an overview of the graph's communities. """
 from .app import app, field, cache
 from typing import NamedTuple, Tuple
 from dash import html, dcc, Input, Output, State
@@ -64,7 +65,8 @@ graph_import = html.Div(children=[
                       dcc.Slider(id="cd_iter", min=2, max=1000, value=2)),
                 field("Page rank damping factor",
                       dcc.Slider(id="pr_damp", min=0, max=1, value=0.85)),
-                dcc.Graph(id="community_graph"),
+                dcc.Graph(id="community_histogram"),
+                dcc.Graph(id="community_hierchplot"),
             ])]),
     dcc.Store(id="graph_active"),
     dcc.Store(id="graph_params")
@@ -94,20 +96,35 @@ def graph_params_to_state(graph_params) -> GraphState:
 
 
 @app.callback(
-    [Output("community_graph", "figure"), 
-     Output("community_graph", "style")
+    [Output("community_histogram", "figure"), 
+     Output("community_histogram", "style"),
+     Output("community_hierchplot", "figure"),
+     Output("community_hierchplot", "style")
     ],
     Input("graph_active", "data"),
     Input("graph_params", "data"),
 )
-def community_graph(graph_active, graph_params):
+def community_plots(graph_active, graph_params):
     if not graph_active:
-        return {}, { "display": "none" }
-    clustering = graph_params_to_state(graph_params).clustering
-    fig = px.histogram(clustering.membership,
-                       title="Community membership histogram")
-    fig.update_layout(xaxis_title="Community number")
-    return fig, {}
+        return {}, { "display": "none" }, {}, { "display": "none"}
+    state = graph_params_to_state(graph_params)
+    clustering = state.clustering
+    
+    hist = px.histogram(clustering.membership, histfunc='count', title="Community membership histogram")
+    hist.update_layout(xaxis_title="Community number")
+
+    df = state.vertices_by_communities_prs.copy()
+    df["community"] = df.index.get_level_values("community")
+    path = [px.Constant("Communities"), "community", "package"]
+    if "class" in df.columns:
+        path.append("class")
+    if "method" in df.columns:
+        path.append("method")
+    tree = px.treemap(df, path=path)
+    tree.update_traces(root_color="lightgrey")
+
+    return hist, {}, tree, {}
+
 
 @app.callback(
     dict(options=Output("import_dir", "options"),
@@ -137,8 +154,7 @@ def graph_import_dir(import_dir):
             "hierarch": graph.hierch,
             "#vertices": len(graph.vertices),
             "#edges": len(graph.edges),
-            **graph.attrs,
-            "hash": graph.hash
+            **graph.attrs
         }, indent=2)
         hierch_disabled = False
         possible_hierch = [h.name for h in graph.hierch.included()]
