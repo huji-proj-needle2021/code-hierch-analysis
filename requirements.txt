@@ -24,6 +24,6 @@ igraph~=0.9.9
 
 # visualization
 dash~=2.2.0
-dash-cytoscape~=0.3.0
+# dash-cytoscape~=0.3.0
+git+https://github.com/plotly/dash-cytoscape@29543d07d3ae459eb56bb809e3a36f7aa7b3072c#dash-cytoscape
 Flask-Caching~=1.10.1
-gunicorn~=20.1.0
