@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y default-jre
 EXPOSE 8050
 WORKDIR /app
 
+COPY ./GRAPHS ./GRAPHS
 COPY requirements.txt requirements.txt
 RUN pip3 install -r requirements.txt && pip3 install gunicorn
 COPY genCallgraph.jar genCallgraph.jar
