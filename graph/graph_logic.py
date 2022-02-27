@@ -99,12 +99,15 @@ def raw_graph_to_igraph(raw: GraphData, args: ConversionArgs) -> Tuple[igraph.Gr
     # page rank for node importance
     graph.vs["pr"] = graph.pagerank(directed=True, weights="weight", damping=args.damping_factor,
                                     implementation="prpack")
+    pr = pd.Series(graph.vs["pr"])
+    norm_pr = (pr - pr.min()) / (pr.max() - pr.min())
+    graph.vs["size"] = 16 + norm_pr * 30 
 
     undirected = graph.as_undirected(mode='collapse', combine_edges={'weight': 'sum'})
-    # clustering = undirected.community_leiden(weights="weight")
     clustering = undirected.community_leiden(n_iterations=args.community_iters,
                                              resolution_parameter=args.resolution, 
-                                             objective_function='modularity')
+                                             objective_function='modularity',
+                                             weights='weight')
     graph.vs["community"] = clustering.membership
     graph.vs["color"] = [GRAPH_COLORS[c % len(GRAPH_COLORS)] for c in clustering.membership]
 

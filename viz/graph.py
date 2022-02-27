@@ -94,7 +94,14 @@ default_stylesheet = [
             "font-size": 12,
             'z-index': 9999
         }
-    }
+    },
+        {
+        'selector': 'edge:selected',
+        'style': {
+            "label": "data(weight)",
+            'color': "black"
+        }
+    },
 ]
 
 # ################################# APP LAYOUT ################################
@@ -127,7 +134,9 @@ LAYOUTS = {
     'circle': "circle",
     'concentric': "concentric",
     'breadthfirst': "breadth-first: good for exploring by clicking around the graph.",
-    'cose': "cose - force directed graph(good for visualizing communities)",
+    'fcose': "fcose: force directed graph(good for visualizing communities)",
+    'cose': 'cose',
+    'cose-bilkent': 'cose-bilkent',
     'cola': "cola",
     'euler': "euler",
     'spread': "spread",
@@ -158,14 +167,18 @@ graph =  html.Div(id="graphAndTabs", style={"display": "none"}, children=[
                     clearable=False
                 ),
                 drc.NamedRadioItems(
-                    name='Graph expansion direction when clicking a node',
+                    name='Graph expansion direction when clicking a node(this causes the layout to be re-drawn)',
                     id='expansion_mode',
                     options=[
-                        {'label': 'Both directions', 'value': 'all'},
-                        {'label': 'Edges coming in', 'value': 'in'},
-                        {'label': 'Edges coming out', 'value': 'out'},
-                        {'label': "Don't expand", 'value': 'dont'},
+                        {'label': 'Expand both incoming and outgoing edges', 'value': 'all'},
+                        {'label': 'Expand incoming edges', 'value': 'in'},
+                        {'label': 'Expand outgoing edges', 'value': 'out'},
+                        {'label': "Don't do anything", 'value': 'dont'}
                     ],
+                    inline=False,
+                    labelStyle={
+                        "display": "block"
+                    },
                     value='all'
                 ),
                 field("Focus on a new node:", html.Div(id="focus", children=[
@@ -179,11 +192,23 @@ graph =  html.Div(id="graphAndTabs", style={"display": "none"}, children=[
                 field("Maximal number of nodes to add",
                       dcc.Slider(id="num_nodes_add", min=0, max=1000)),
                 dcc.Checklist(id="add_edges", options=[
-                              "Add edges spanned by these nodes too(can be heavy)"], value=[]),
+                              "Add edges spanned by these nodes"], value=["Add edges spanned by these nodes too"]),
                 html.Button(id="add_button", children="Add"),
 
                 dcc.Checklist(id="show_neigh_labels", options=[
                               "Show labels for neighbor nodes"], value=["Show labels for neighbor nodes"]),
+
+                dcc.Checklist(id="show_neigh_edge_labels", options=[
+                              "Show labels for neighbor edges"], value=[]),
+
+                dcc.Checklist(id="use_pr_scaling", options=[
+                              "Use pagerank for node scaling"], value=["Use pagerank for node scaling"]),
+
+                field("Edge weight range",
+                      dcc.RangeSlider(id="edge_weight_range", min=0, max=1, value=[0.9, 1])),
+
+                field("Pagerank range",
+                      dcc.RangeSlider(id="pagerank_range", min=0, max=1, value=[0, 1]))
             ]),
 
             dcc.Tab(label='JSON', children=[
@@ -216,10 +241,16 @@ def render_graph(graph_active):
 
 # ############################## CALLBACKS ####################################
 
-@app.callback(Output("cytoscape", "stylesheet"), Input("show_neigh_labels", "value"))
-def graph_stylesheet(show_neigh_labels):
+
+@app.callback(Output("cytoscape", "stylesheet"), Input("show_neigh_labels", "value"), Input("show_neigh_edge_labels", "value"),
+              Input("use_pr_scaling", "value"), Input("edge_weight_range", "value"),
+              Input("pagerank_range", "value"))
+def graph_stylesheet(show_neigh_labels, show_neigh_edge_labels, use_pr_scaling, edge_weight_range,
+                     pagerank_range):
+    # shallow copy the list as we are only adding items to the list
+    stylesheet = default_stylesheet.copy()
     if len(show_neigh_labels) > 0:
-        return default_stylesheet + [{
+        stylesheet.append({
             'selector': '.selneighbor',
             "style": {
                 "label": "data(label)",
@@ -228,8 +259,41 @@ def graph_stylesheet(show_neigh_labels):
                 'z-index': 9999
 
             }
-        }]
-    return default_stylesheet
+        })
+    if len(show_neigh_edge_labels) > 0:
+        stylesheet.append({
+            'selector': '.selneighedge',
+            "style": {
+                "label": "data(weight)",
+                "color": "black",
+                "font-size": 8,
+            }
+        })
+    if len(use_pr_scaling) > 0:
+        stylesheet.append({
+            'selector': 'node',
+            "style": {
+                'width': 'data(size)',
+                'height': 'data(size)',
+            }
+        })
+    if edge_weight_range:
+        [min_weight, max_weight] = edge_weight_range
+        stylesheet.append({
+            'selector': f'edge[weight < {min_weight}],edge[weight > {max_weight}]',
+            "style": {
+                "display": "none"
+            }
+        })
+    if pagerank_range:
+        [min_pr, max_pr] = pagerank_range
+        stylesheet.append({
+            'selector': f'node[pr < {min_pr}],node[pr > {max_pr}]',
+            "style": {
+                "display": "none"
+            }
+        })
+    return stylesheet
 
 @app.callback(Output('tap-node-json-output', 'children'),
               [Input('cytoscape', 'tapNode')])
@@ -302,6 +366,25 @@ def update_search_options(graph_active, package, typedef, method, graph_params, 
 
     return { "new_options": new_options, "focus_disabled": not can_focus }
 
+
+@app.callback(Output("num_nodes_add", "max"), Input("graph_active", "data"), Input("graph_params", "data"),
+              State("cytoscape", "elements"))
+def update_max_nodes_to_add(graph_active, graph_params, elements):
+    if not graph_active or not graph_active:
+        return 0
+
+    n_cur_nodes = sum(1 for el in elements if el.get("data").get("name"))
+    state = graph_params_to_state(graph_params)
+    return len(state.vertices_by_communities_prs) - n_cur_nodes
+
+
+@app.callback(Output("edge_weight_range", "max"), Output("pagerank_range", "max"),
+              Input("graph_active", "data"),Input("graph_params", "data"))
+def update_max_edge_weight_and_pr(is_active, graph_params):
+    if not is_active:
+        return 1, 1
+    state = graph_params_to_state(graph_params)
+    return max(state.graph.es["weight"]), max(state.graph.vs["pr"])
 
 
 def handle_add_nodes(state: GraphState, elements, num_nodes_to_add, add_edges_opt):
@@ -403,15 +486,17 @@ def handle_tap_node(state: GraphState, elements, nodeData, expansion_mode):
 
     if do_expand:
         elements.extend(igraph_vert_to_cyto(graph, graph.vs[node_ix], classes=[node_class, "selneighbor"]) for node_ix in neigh_nodes)
-        elements.extend(igraph_edge_to_cyto(graph, edge, classes=[edge_class, "selneighbor"])
+        elements.extend(igraph_edge_to_cyto(graph, edge, classes=[edge_class, "selneighedge"])
                         for edge in neigh_edges)
 
     for element in elements:
         el_id = element.get('data').get('id')
-        if el_id is None:
-            continue
+        source, tgt = element.get("data").get("source"), element.get("data").get("target")
         if el_id not in neigh_names:
             element["classes"] = element["classes"].replace("selneighbor", "")
+        if source and tgt:
+            if source not in neigh_names and tgt not in neigh_names:
+                element["classes"] = element["classes"].replace("selneighedge", "")
     return elements
 
 @app.callback(Output('cytoscape', 'elements'),
