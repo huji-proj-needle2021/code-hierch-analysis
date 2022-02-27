@@ -13,5 +13,4 @@ COPY genCallgraph.jar genCallgraph.jar
 
 COPY . .
 
-# CMD ["gunicorn"  , "--workers", "1", "--bind", "0.0.0.0:8050", "viz:server"]
-CMD ["python", "dashviz.py"]
+CMD ["gunicorn"  , "--workers", "1", "--bind", "0.0.0.0:8050", "viz:server"]
