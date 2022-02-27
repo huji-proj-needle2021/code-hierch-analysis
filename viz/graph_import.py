@@ -63,6 +63,7 @@ graph_import = html.Div(children=[
                       dcc.Slider(id="cd_resolution", min=0, max=1, value=1)),
                 field("Community detection number of iterations (more iterations, more accurate)",
                       dcc.Slider(id="cd_iter", min=2, max=1000, value=2)),
+                html.P(id="modularity"),
                 field("Page rank damping factor",
                       dcc.Slider(id="pr_damp", min=0, max=1, value=0.85)),
                 dcc.Graph(id="community_histogram"),
@@ -99,14 +100,15 @@ def graph_params_to_state(graph_params) -> GraphState:
     [Output("community_histogram", "figure"), 
      Output("community_histogram", "style"),
      Output("community_hierchplot", "figure"),
-     Output("community_hierchplot", "style")
+     Output("community_hierchplot", "style"),
+     Output("modularity", "children")
     ],
     Input("graph_active", "data"),
     Input("graph_params", "data"),
 )
 def community_plots(graph_active, graph_params):
     if not graph_active:
-        return {}, { "display": "none" }, {}, { "display": "none"}
+        return {}, { "display": "none" }, {}, { "display": "none"}, []
     state = graph_params_to_state(graph_params)
     clustering = state.clustering
     
@@ -123,7 +125,8 @@ def community_plots(graph_active, graph_params):
     tree = px.treemap(df, path=path)
     tree.update_traces(root_color="lightgrey")
 
-    return hist, {}, tree, {}
+    mod = f"Modularity: {clustering.modularity}"
+    return hist, {}, tree, {}, mod
 
 
 @app.callback(

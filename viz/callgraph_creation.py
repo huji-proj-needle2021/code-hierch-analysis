@@ -98,6 +98,8 @@ def files_to_be_uploaded(filenames):
 def create_callgraph(n_clicks, out_dir, jar_filter, edge_filter, main_identifier, graph_state, import_dir, jar_filenames, jar_contents):
     if n_clicks:
         print("Trying to fetch callgraph")
+        if (GRAPH_DIR / out_dir).exists():
+            raise ValueError(f"Cannot use {out_dir} - a graph with this name already exists")
         with tempfile.TemporaryDirectory("jar_dir") as input_jar_folder:
             for filename, content in zip(jar_filenames, jar_contents):
                 if not filename.endswith("jar"):
