@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM python:3.7-slim-buster
 
-RUN apt-get update && apt-get install -y default-jre
+RUN apt-get update && apt-get install -y default-jre git
 
 EXPOSE 8050
 WORKDIR /app
